@@ -50,7 +50,7 @@ app.use((req, res, next) => {
 });
 
 // 設定 Redis 和 Bull Queue
-const redisConfig = {
+let redisConfig = {
   port: process.env.REDIS_PORT || 6379,
   host: process.env.REDIS_HOST || 'localhost',
   maxRetriesPerRequest: 3,
@@ -105,24 +105,54 @@ logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼
 
 // 創建 Redis 連接測試
 const Redis = require('ioredis');
-const testRedis = new Redis(redisConfig);
 
-testRedis.on('connect', () => {
-  logger.info('✅ Redis 連接成功');
+// 嘗試多種連接方式
+async function testRedisConnection() {
+  const testConfigs = [
+    // 1. 使用連接字串
+    process.env.REDIS_CONNECTION_STRING || process.env.REDIS_URI,
+    // 2. 使用個別參數
+    redisConfig,
+    // 3. 簡化配置
+    {
+      host: process.env.REDIS_HOST || 'redis',
+      port: process.env.REDIS_PORT || 6379,
+      password: process.env.REDIS_PASSWORD,
+      maxRetriesPerRequest: 1,
+      lazyConnect: true
+    }
+  ];
+
+  for (let i = 0; i < testConfigs.length; i++) {
+    const config = testConfigs[i];
+    if (!config) continue;
+
+    try {
+      logger.info(`🔄 嘗試 Redis 連接配置 ${i + 1}:`, typeof config === 'string' ? config : `${config.host}:${config.port}`);
+      
+      const testRedis = new Redis(config);
+      
+      await testRedis.ping();
+      logger.info(`✅ Redis 連接配置 ${i + 1} 成功！`);
+      
+      // 更新全局配置
+      redisConfig = config;
+      await testRedis.quit();
+      break;
+      
+    } catch (error) {
+      logger.error(`❌ Redis 連接配置 ${i + 1} 失敗: ${error.message}`);
+      if (i === testConfigs.length - 1) {
+        logger.error('🚨 所有 Redis 連接配置都失敗！');
+      }
+    }
+  }
+}
+
+// 執行連接測試
+testRedisConnection().catch(error => {
+  logger.error(`Redis 連接測試失敗: ${error.message}`);
 });
-
-testRedis.on('error', (error) => {
-  logger.error(`❌ Redis 連接失敗: ${error.message}`);
-});
-
-// 測試 Redis 連接
-testRedis.ping()
-  .then(() => {
-    logger.info('✅ Redis PING 成功');
-  })
-  .catch((error) => {
-    logger.error(`❌ Redis PING 失敗: ${error.message}`);
-  });
 
 const audioQueue = new Queue('audio transcription', {
   redis: redisConfig
