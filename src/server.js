@@ -95,6 +95,27 @@ logger.info(`Zeabur 相關環境變數: ${zeaburEnvVars.join(', ')}`);
 
 logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼: ${redisConfig.password ? '已設定' : '未設定'}`);
 
+// 創建 Redis 連接測試
+const Redis = require('ioredis');
+const testRedis = new Redis(redisConfig);
+
+testRedis.on('connect', () => {
+  logger.info('✅ Redis 連接成功');
+});
+
+testRedis.on('error', (error) => {
+  logger.error(`❌ Redis 連接失敗: ${error.message}`);
+});
+
+// 測試 Redis 連接
+testRedis.ping()
+  .then(() => {
+    logger.info('✅ Redis PING 成功');
+  })
+  .catch((error) => {
+    logger.error(`❌ Redis PING 失敗: ${error.message}`);
+  });
+
 const audioQueue = new Queue('audio transcription', {
   redis: redisConfig
 });
