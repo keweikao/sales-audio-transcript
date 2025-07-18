@@ -87,6 +87,12 @@ logger.info(`- REDIS_URL: ${process.env.REDIS_URL || '未設定'}`);
 const allEnvVars = Object.keys(process.env).filter(key => key.includes('REDIS'));
 logger.info(`所有 Redis 相關環境變數: ${allEnvVars.join(', ')}`);
 
+// 檢查 Zeabur 自動提供的環境變數
+const zeaburEnvVars = Object.keys(process.env).filter(key => 
+  key.includes('REDIS') || key.includes('DATABASE') || key.includes('_URL')
+);
+logger.info(`Zeabur 相關環境變數: ${zeaburEnvVars.join(', ')}`);
+
 logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼: ${redisConfig.password ? '已設定' : '未設定'}`);
 
 const audioQueue = new Queue('audio transcription', {

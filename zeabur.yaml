@@ -52,6 +52,7 @@ services:
     config:
       maxmemory: 256mb
       maxmemory-policy: allkeys-lru
+      requirepass: ${REDIS_PASSWORD}
       
     # 持續化儲存
     volumes:
