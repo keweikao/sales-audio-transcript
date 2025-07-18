@@ -16,7 +16,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # 安裝 Node.js 依賴
-RUN npm ci --only=production
+RUN npm install --only=production
 
 # 複製應用程式代碼
 COPY . .

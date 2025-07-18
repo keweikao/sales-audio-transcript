@@ -3,7 +3,7 @@ name: whisper-optimized-service
 services:
   app:
     type: nodejs
-    buildCommand: npm ci
+    buildCommand: npm install
     startCommand: npm start
     
     # 環境變數設定
