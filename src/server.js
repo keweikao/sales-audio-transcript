@@ -67,12 +67,18 @@ if (process.env.REDIS_PASSWORD) {
 }
 
 // 如果有 Redis URL，使用 URL 配置
-if (process.env.REDIS_URL) {
-  const redisUrl = new URL(process.env.REDIS_URL);
-  redisConfig.host = redisUrl.hostname;
-  redisConfig.port = redisUrl.port;
-  if (redisUrl.password) {
-    redisConfig.password = redisUrl.password;
+if (process.env.REDIS_URL || process.env.REDIS_URI || process.env.REDIS_CONNECTION_STRING) {
+  const redisUrlStr = process.env.REDIS_URL || process.env.REDIS_URI || process.env.REDIS_CONNECTION_STRING;
+  try {
+    const redisUrl = new URL(redisUrlStr);
+    redisConfig.host = redisUrl.hostname;
+    redisConfig.port = redisUrl.port || 6379;
+    if (redisUrl.password) {
+      redisConfig.password = redisUrl.password;
+    }
+    logger.info(`使用 Redis URL 配置: ${redisUrl.hostname}:${redisUrl.port}`);
+  } catch (error) {
+    logger.error(`解析 Redis URL 失敗: ${error.message}`);
   }
 }
 
