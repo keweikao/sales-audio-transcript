@@ -277,6 +277,23 @@ async function transcribeWithOpenAI(localFilePath) {
   }
 }
 
+// 根路由 - 服務資訊
+app.get('/', (req, res) => {
+  res.json({
+    service: 'Zeabur Whisper 優化轉錄服務',
+    version: '1.0.0',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      transcribe: 'POST /transcribe',
+      health: 'GET /health',
+      quality: 'GET /quality',
+      jobStatus: 'GET /job/:jobId'
+    },
+    description: '專為 iPhone 音檔優化的 AI 轉錄服務，支援 Faster-Whisper 和 OpenAI API 智能降級'
+  });
+});
+
 // API 路由
 app.post('/transcribe', async (req, res) => {
   try {
