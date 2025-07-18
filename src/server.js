@@ -88,16 +88,18 @@ logger.info(`- REDIS_HOST: ${process.env.REDIS_HOST || '未設定'}`);
 logger.info(`- REDIS_PORT: ${process.env.REDIS_PORT || '未設定'}`);
 logger.info(`- REDIS_PASSWORD: ${process.env.REDIS_PASSWORD ? '已設定' : '未設定'}`);
 logger.info(`- REDIS_URL: ${process.env.REDIS_URL || '未設定'}`);
+logger.info(`- REDIS_CONNECTION_STRING: ${process.env.REDIS_CONNECTION_STRING || '未設定'}`);
+logger.info(`- REDIS_URI: ${process.env.REDIS_URI || '未設定'}`);
 
 // 檢查其他可能的 Redis 環境變數
 const allEnvVars = Object.keys(process.env).filter(key => key.includes('REDIS'));
 logger.info(`所有 Redis 相關環境變數: ${allEnvVars.join(', ')}`);
 
-// 檢查 Zeabur 自動提供的環境變數
-const zeaburEnvVars = Object.keys(process.env).filter(key => 
-  key.includes('REDIS') || key.includes('DATABASE') || key.includes('_URL')
-);
-logger.info(`Zeabur 相關環境變數: ${zeaburEnvVars.join(', ')}`);
+// 檢查 Google 服務設定
+logger.info(`Google 服務設定:`);
+logger.info(`- GOOGLE_SERVICE_ACCOUNT_KEY: ${process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? '已設定' : '未設定'}`);
+logger.info(`- GOOGLE_SPREADSHEET_ID: ${process.env.GOOGLE_SPREADSHEET_ID || '未設定'}`);
+logger.info(`- OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '已設定' : '未設定'}`);
 
 logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼: ${redisConfig.password ? '已設定' : '未設定'}`);
 
