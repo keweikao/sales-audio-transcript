@@ -76,6 +76,17 @@ if (process.env.REDIS_URL) {
   }
 }
 
+// 調試環境變數
+logger.info(`環境變數調試:`);
+logger.info(`- REDIS_HOST: ${process.env.REDIS_HOST || '未設定'}`);
+logger.info(`- REDIS_PORT: ${process.env.REDIS_PORT || '未設定'}`);
+logger.info(`- REDIS_PASSWORD: ${process.env.REDIS_PASSWORD ? '已設定' : '未設定'}`);
+logger.info(`- REDIS_URL: ${process.env.REDIS_URL || '未設定'}`);
+
+// 檢查其他可能的 Redis 環境變數
+const allEnvVars = Object.keys(process.env).filter(key => key.includes('REDIS'));
+logger.info(`所有 Redis 相關環境變數: ${allEnvVars.join(', ')}`);
+
 logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼: ${redisConfig.password ? '已設定' : '未設定'}`);
 
 const audioQueue = new Queue('audio transcription', {
