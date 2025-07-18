@@ -1,3 +1,6 @@
+// 載入環境變數
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -32,7 +35,7 @@ const qualityMonitor = new QualityMonitor();
 
 // 初始化 OpenAI 客戶端
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY || 'dummy-key'
 });
 
 // 設定中介軟體
@@ -51,7 +54,34 @@ const audioQueue = new Queue('audio transcription', {
   redis: {
     port: process.env.REDIS_PORT || 6379,
     host: process.env.REDIS_HOST || 'localhost',
+    maxRetriesPerRequest: 3,
+    retryDelayOnFailover: 100,
+    lazyConnect: true,
+    keepAlive: 30000,
+    connectTimeout: 10000,
+    commandTimeout: 5000
   }
+});
+
+// Redis 連接錯誤處理
+audioQueue.on('error', (error) => {
+  logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
+});
+
+audioQueue.on('waiting', (jobId) => {
+  logger.info(`任務 ${jobId} 進入等待佇列`);
+});
+
+audioQueue.on('active', (job) => {
+  logger.info(`任務 ${job.id} 開始處理`);
+});
+
+audioQueue.on('completed', (job, result) => {
+  logger.info(`任務 ${job.id} 完成處理`);
+});
+
+audioQueue.on('failed', (job, err) => {
+  logger.error(`任務 ${job.id} 處理失敗: ${err.message}`);
 });
 
 // 設定 Queue 處理器
@@ -401,17 +431,38 @@ app.listen(port, () => {
   logger.info(`降級機制: 啟用`);
 });
 
+// 進程錯誤處理
+process.on('uncaughtException', (error) => {
+  logger.error(`未捕捉的異常: ${error.message}`);
+  logger.error(error.stack);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error(`未處理的 Promise 拒絕: ${reason}`);
+  logger.error(`Promise: ${promise}`);
+  process.exit(1);
+});
+
 // 優雅關閉
 process.on('SIGTERM', () => {
   logger.info('收到 SIGTERM，正在關閉服務器...');
-  audioQueue.close();
-  process.exit(0);
+  audioQueue.close().then(() => {
+    process.exit(0);
+  }).catch((error) => {
+    logger.error(`關閉佇列時發生錯誤: ${error.message}`);
+    process.exit(1);
+  });
 });
 
 process.on('SIGINT', () => {
   logger.info('收到 SIGINT，正在關閉服務器...');
-  audioQueue.close();
-  process.exit(0);
+  audioQueue.close().then(() => {
+    process.exit(0);
+  }).catch((error) => {
+    logger.error(`關閉佇列時發生錯誤: ${error.message}`);
+    process.exit(1);
+  });
 });
 
 module.exports = app;
