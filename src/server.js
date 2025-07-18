@@ -50,17 +50,36 @@ app.use((req, res, next) => {
 });
 
 // 設定 Redis 和 Bull Queue
-const audioQueue = new Queue('audio transcription', {
-  redis: {
-    port: process.env.REDIS_PORT || 6379,
-    host: process.env.REDIS_HOST || 'localhost',
-    maxRetriesPerRequest: 3,
-    retryDelayOnFailover: 100,
-    lazyConnect: true,
-    keepAlive: 30000,
-    connectTimeout: 10000,
-    commandTimeout: 5000
+const redisConfig = {
+  port: process.env.REDIS_PORT || 6379,
+  host: process.env.REDIS_HOST || 'localhost',
+  maxRetriesPerRequest: 3,
+  retryDelayOnFailover: 100,
+  lazyConnect: true,
+  keepAlive: 30000,
+  connectTimeout: 10000,
+  commandTimeout: 5000
+};
+
+// 如果有 Redis 密碼，添加到配置中
+if (process.env.REDIS_PASSWORD) {
+  redisConfig.password = process.env.REDIS_PASSWORD;
+}
+
+// 如果有 Redis URL，使用 URL 配置
+if (process.env.REDIS_URL) {
+  const redisUrl = new URL(process.env.REDIS_URL);
+  redisConfig.host = redisUrl.hostname;
+  redisConfig.port = redisUrl.port;
+  if (redisUrl.password) {
+    redisConfig.password = redisUrl.password;
   }
+}
+
+logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼: ${redisConfig.password ? '已設定' : '未設定'}`);
+
+const audioQueue = new Queue('audio transcription', {
+  redis: redisConfig
 });
 
 // Redis 連接錯誤處理
