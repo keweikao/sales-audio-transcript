@@ -59,9 +59,11 @@ audioQueue.process(async (job) => {
   const { fileId, fileName, caseId, forceOpenAI } = job.data;
   
   try {
-    logger.info(`開始處理轉錄任務 - Case ID: ${caseId}`);
+    logger.info(`🎬 開始處理轉錄任務 - Case ID: ${caseId}`);
+    logger.info(`📋 任務資訊: 檔案 ${fileName}, 強制 OpenAI: ${forceOpenAI ? '是' : '否'}`);
     
     // 1. 從 Google Drive 下載音檔
+    logger.info(`📥 步驟 1/4: 正在從 Google Drive 下載音檔...`);
     const localFilePath = await downloadFromGoogleDrive(fileId, fileName);
     
     let transcript = '';
@@ -69,16 +71,17 @@ audioQueue.process(async (job) => {
     let processingMethod = 'faster-whisper';
     
     // 2. 決定使用哪種轉錄方法
+    logger.info(`🤖 步驟 2/4: 選擇轉錄方法...`);
     if (forceOpenAI) {
       // 如果強制使用 OpenAI API
-      logger.info('使用 OpenAI API 轉錄（強制模式）');
+      logger.info('🔧 使用 OpenAI API 轉錄（強制模式）');
       const result = await transcribeWithOpenAI(localFilePath);
       transcript = result.transcript;
       quality = result.quality;
       processingMethod = 'openai-api';
     } else {
       // 先嘗試 Faster-Whisper
-      logger.info('使用 Faster-Whisper 轉錄');
+      logger.info('🔧 使用 Faster-Whisper 轉錄');
       const result = await transcribeAudio(localFilePath);
       transcript = result.transcript;
       quality = result.quality;
@@ -111,6 +114,7 @@ audioQueue.process(async (job) => {
     }
     
     // 3. 記錄品質監控
+    logger.info(`📊 步驟 3/4: 記錄品質監控...`);
     qualityMonitor.recordTranscription({
       success: true,
       caseId: caseId,
@@ -119,13 +123,15 @@ audioQueue.process(async (job) => {
     });
     
     // 4. 更新 Google Sheets
+    logger.info(`📝 步驟 4/4: 更新 Google Sheets...`);
     await updateGoogleSheet(caseId, transcript, 'Completed', {
       processingMethod: processingMethod,
       qualityScore: quality.score,
       confidence: quality.confidence
     });
     
-    logger.info(`轉錄完成 - Case ID: ${caseId}, 方法: ${processingMethod}, 品質: ${quality.score}/100`);
+    logger.info(`🎉 轉錄任務完成 - Case ID: ${caseId}`);
+    logger.info(`📈 最終結果: 方法=${processingMethod}, 品質=${quality.score}/100, 文字長度=${transcript.length}字元`);
     
     return { 
       success: true, 

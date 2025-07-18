@@ -308,7 +308,7 @@ async function splitByTime(inputPath, chunkDuration) {
 /**
  * 使用優化參數的 Faster-Whisper 轉錄
  */
-async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false) {
+async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, progressCallback = null) {
   try {
     logger.info(`開始轉錄 ${isFromiPhone ? 'iPhone 錄音' : '音檔'}: ${audioPath}`);
     
@@ -319,6 +319,13 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false) {
     const initialPrompt = isFromiPhone ? 
       "這是一段來自 iPhone 的高品質中文商務對話錄音，包含專業術語、人名和地名。請準確轉錄。" :
       config.whisperOptions.initial_prompt;
+    
+    // 轉錄進度回調
+    if (progressCallback) {
+      progressCallback(10, '正在載入 Whisper 模型...');
+    }
+    
+    logger.info(`🎯 轉錄進度: 10% - 正在載入 Whisper 模型...`);
     
     const transcript = await nodeWhisper(audioPath, {
       modelName: config.modelName,
@@ -332,13 +339,24 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false) {
       }
     });
     
+    if (progressCallback) {
+      progressCallback(90, '轉錄完成，正在後處理...');
+    }
+    
+    logger.info(`🎯 轉錄進度: 90% - 轉錄完成，正在後處理...`);
+    
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;
     
     // 計算轉錄品質指標
     const quality = assessTranscriptionQuality(transcript);
     
-    logger.info(`轉錄完成:`);
+    if (progressCallback) {
+      progressCallback(100, '轉錄完成');
+    }
+    
+    logger.info(`🎯 轉錄進度: 100% - 轉錄完成`);
+    logger.info(`✅ 轉錄成功完成:`);
     logger.info(`- 處理時間: ${processingTime.toFixed(2)} 秒`);
     logger.info(`- 文字長度: ${transcript.length} 字元`);
     logger.info(`- 品質評分: ${quality.score}/100`);
@@ -351,7 +369,7 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false) {
     };
     
   } catch (error) {
-    logger.error(`Faster-Whisper 轉錄失敗: ${error.message}`);
+    logger.error(`❌ Faster-Whisper 轉錄失敗: ${error.message}`);
     throw error;
   }
 }
@@ -446,45 +464,67 @@ async function transcribeAudio(inputPath) {
   const processedPath = path.join(tempDir.name, 'processed.mp3');
   
   try {
-    logger.info(`開始轉錄流程: ${inputPath}`);
+    logger.info(`🚀 開始轉錄流程: ${inputPath}`);
+    logger.info(`📊 整體進度: 0% - 初始化轉錄流程`);
     
     // 1. 獲取音檔資訊
+    logger.info(`📊 整體進度: 5% - 正在分析音檔資訊...`);
     const audioInfo = await getAudioInfo(inputPath);
     const isFromiPhone = audioInfo.isFromiPhone;
     
-    logger.info(`音檔資訊:`);
+    logger.info(`🎵 音檔資訊:`);
     logger.info(`- 格式: ${audioInfo.format} (${audioInfo.codec})`);
     logger.info(`- 時長: ${(audioInfo.duration/60).toFixed(1)} 分鐘`);
     logger.info(`- 大小: ${audioInfo.sizeMB.toFixed(2)} MB`);
     logger.info(`- iPhone 錄音: ${isFromiPhone ? '是' : '否'}`);
     
     // 2. 預處理音檔
+    logger.info(`📊 整體進度: 15% - 正在預處理音檔...`);
     await preprocessiPhoneAudio(inputPath, processedPath, audioInfo);
     
     // 3. 智能分割
+    logger.info(`📊 整體進度: 25% - 正在智能分割音檔...`);
     const processedInfo = await getAudioInfo(processedPath);
     const chunkFiles = await smartSplitAudioForiPhone(processedPath, processedInfo);
     
+    logger.info(`🔄 分割結果: ${chunkFiles.length} 個片段`);
+    
     // 4. 轉錄處理
+    logger.info(`📊 整體進度: 30% - 開始轉錄處理...`);
     let finalTranscript = '';
     let totalQuality = { score: 0, confidence: 0 };
     
     if (chunkFiles.length === 1) {
       // 單個檔案直接轉錄
-      const result = await transcribeWithOptimizedWhisper(chunkFiles[0], isFromiPhone);
+      logger.info(`📊 整體進度: 35% - 單檔轉錄模式`);
+      
+      const progressCallback = (percent, message) => {
+        const overallProgress = 35 + (percent * 0.55); // 35% 到 90%
+        logger.info(`📊 整體進度: ${overallProgress.toFixed(0)}% - ${message}`);
+      };
+      
+      const result = await transcribeWithOptimizedWhisper(chunkFiles[0], isFromiPhone, progressCallback);
       finalTranscript = result.text;
       totalQuality = result.quality;
     } else {
       // 多個片段批次處理
-      const results = await processAudioChunks(chunkFiles, isFromiPhone);
+      logger.info(`📊 整體進度: 35% - 多檔批次轉錄模式 (${chunkFiles.length} 個片段)`);
+      
+      const results = await processAudioChunks(chunkFiles, isFromiPhone, (current, total) => {
+        const chunkProgress = 35 + ((current / total) * 55); // 35% 到 90%
+        logger.info(`📊 整體進度: ${chunkProgress.toFixed(0)}% - 正在處理片段 ${current}/${total}`);
+      });
+      
       finalTranscript = results.text;
       totalQuality = results.quality;
     }
     
     // 5. 後處理
+    logger.info(`📊 整體進度: 95% - 正在後處理轉錄結果...`);
     const cleanedTranscript = cleanupTranscript(finalTranscript);
     
-    logger.info(`轉錄流程完成:`);
+    logger.info(`📊 整體進度: 100% - 轉錄流程完成！`);
+    logger.info(`🎉 轉錄流程成功完成:`);
     logger.info(`- 最終文字長度: ${cleanedTranscript.length} 字元`);
     logger.info(`- 整體品質評分: ${totalQuality.score}/100`);
     logger.info(`- 整體信心度: ${totalQuality.confidence.toFixed(2)}`);
@@ -496,14 +536,14 @@ async function transcribeAudio(inputPath) {
     };
     
   } catch (error) {
-    logger.error(`轉錄流程失敗: ${error.message}`);
+    logger.error(`❌ 轉錄流程失敗: ${error.message}`);
     throw error;
   } finally {
     // 清理臨時目錄
     try {
       tempDir.removeCallback();
     } catch (cleanupError) {
-      logger.warn(`清理臨時目錄失敗: ${cleanupError.message}`);
+      logger.warn(`⚠️ 清理臨時目錄失敗: ${cleanupError.message}`);
     }
   }
 }
@@ -511,7 +551,7 @@ async function transcribeAudio(inputPath) {
 /**
  * 處理音檔分塊
  */
-async function processAudioChunks(chunkFiles, isFromiPhone) {
+async function processAudioChunks(chunkFiles, isFromiPhone, progressCallback = null) {
   const results = [];
   let totalScore = 0;
   let totalConfidence = 0;
@@ -520,21 +560,32 @@ async function processAudioChunks(chunkFiles, isFromiPhone) {
     const chunkPath = chunkFiles[i];
     
     try {
-      logger.info(`處理片段 ${i + 1}/${chunkFiles.length}`);
+      logger.info(`🎯 處理片段 ${i + 1}/${chunkFiles.length}`);
       
-      const result = await transcribeWithOptimizedWhisper(chunkPath, isFromiPhone);
+      // 回報進度
+      if (progressCallback) {
+        progressCallback(i + 1, chunkFiles.length);
+      }
+      
+      const chunkProgressCallback = (percent, message) => {
+        const chunkPercent = (i / chunkFiles.length) * 100 + (percent / chunkFiles.length);
+        logger.info(`📊 片段 ${i + 1} 進度: ${percent}% - ${message}`);
+      };
+      
+      const result = await transcribeWithOptimizedWhisper(chunkPath, isFromiPhone, chunkProgressCallback);
       
       if (result.text && result.text.length > 0) {
         results.push(result.text);
         totalScore += result.quality.score;
         totalConfidence += result.quality.confidence;
+        logger.info(`✅ 片段 ${i + 1} 轉錄成功: ${result.text.length} 字元`);
       } else {
-        logger.warning(`片段 ${i + 1} 轉錄結果為空`);
+        logger.warn(`⚠️ 片段 ${i + 1} 轉錄結果為空`);
         results.push(`[片段 ${i + 1} 無法轉錄]`);
       }
       
     } catch (error) {
-      logger.error(`轉錄片段 ${i + 1} 失敗: ${error.message}`);
+      logger.error(`❌ 轉錄片段 ${i + 1} 失敗: ${error.message}`);
       results.push(`[片段 ${i + 1} 轉錄失敗: ${error.message}]`);
     } finally {
       // 清理片段檔案
@@ -543,13 +594,15 @@ async function processAudioChunks(chunkFiles, isFromiPhone) {
           fs.unlinkSync(chunkPath);
         }
       } catch (cleanupError) {
-        logger.warn(`清理片段檔案失敗: ${cleanupError.message}`);
+        logger.warn(`⚠️ 清理片段檔案失敗: ${cleanupError.message}`);
       }
     }
   }
   
   const avgScore = results.length > 0 ? totalScore / results.length : 0;
   const avgConfidence = results.length > 0 ? totalConfidence / results.length : 0;
+  
+  logger.info(`🎉 所有片段處理完成: ${results.length} 個片段`);
   
   return {
     text: results.join('\n\n'),
