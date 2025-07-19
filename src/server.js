@@ -486,6 +486,139 @@ app.post('/admin/reset-quality-stats', (req, res) => {
   }
 });
 
+// 診斷端點 - 測試 Google Drive 存取
+app.get('/debug/check-file/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { checkFileAccess, getFileInfo } = require('./services/googleDriveService');
+    
+    logger.info(`開始檢查檔案存取權限: ${fileId}`);
+    
+    // 檢查檔案存取權限
+    const hasAccess = await checkFileAccess(fileId);
+    
+    if (!hasAccess) {
+      return res.json({
+        fileId,
+        hasAccess: false,
+        error: '無法存取檔案或檔案不存在'
+      });
+    }
+    
+    // 取得檔案資訊
+    const fileInfo = await getFileInfo(fileId);
+    
+    res.json({
+      fileId,
+      hasAccess: true,
+      fileInfo: fileInfo
+    });
+    
+  } catch (error) {
+    logger.error(`檢查檔案失敗: ${error.message}`);
+    res.status(500).json({
+      error: error.message,
+      fileId: req.params.fileId
+    });
+  }
+});
+
+// 診斷端點 - 測試完整轉錄流程
+app.post('/debug/test-transcription', async (req, res) => {
+  try {
+    const { fileId, fileName, caseId } = req.body;
+    
+    if (!fileId || !caseId) {
+      return res.status(400).json({
+        error: '缺少必要參數: fileId 或 caseId'
+      });
+    }
+    
+    logger.info(`開始診斷轉錄流程 - Case ID: ${caseId}, File ID: ${fileId}`);
+    
+    // 步驟 1: 檢查 Google Drive 存取
+    const { checkFileAccess } = require('./services/googleDriveService');
+    const hasAccess = await checkFileAccess(fileId);
+    
+    if (!hasAccess) {
+      return res.json({
+        step: 1,
+        success: false,
+        error: '無法存取 Google Drive 檔案',
+        fileId,
+        caseId
+      });
+    }
+    
+    // 步驟 2: 嘗試下載檔案
+    const { downloadFromGoogleDrive } = require('./services/googleDriveService');
+    let localFilePath;
+    
+    try {
+      localFilePath = await downloadFromGoogleDrive(fileId, fileName);
+      logger.info(`檔案下載成功: ${localFilePath}`);
+    } catch (downloadError) {
+      return res.json({
+        step: 2,
+        success: false,
+        error: `檔案下載失敗: ${downloadError.message}`,
+        fileId,
+        caseId
+      });
+    }
+    
+    // 步驟 3: 檢查 OpenAI API
+    try {
+      const testResponse = await openai.models.list();
+      logger.info('OpenAI API 連接正常');
+    } catch (openaiError) {
+      return res.json({
+        step: 3,
+        success: false,
+        error: `OpenAI API 連接失敗: ${openaiError.message}`,
+        fileId,
+        caseId
+      });
+    }
+    
+    // 步驟 4: 檢查 Google Sheets 存取
+    const { checkConnection } = require('./services/googleSheetsService');
+    const sheetsConnection = await checkConnection();
+    
+    if (!sheetsConnection.connected) {
+      return res.json({
+        step: 4,
+        success: false,
+        error: `Google Sheets 連接失敗: ${sheetsConnection.error}`,
+        fileId,
+        caseId
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: '所有診斷步驟通過',
+      fileId,
+      caseId,
+      localFilePath,
+      sheetsTitle: sheetsConnection.spreadsheetTitle,
+      checks: {
+        googleDrive: '✅ 可存取',
+        fileDownload: '✅ 下載成功',
+        openaiAPI: '✅ 連接正常',
+        googleSheets: '✅ 連接正常'
+      }
+    });
+    
+  } catch (error) {
+    logger.error(`診斷流程失敗: ${error.message}`);
+    res.status(500).json({
+      error: error.message,
+      step: 'unknown'
+    });
+  }
+});
+
 // 管理端點 - 手動觸發 OpenAI API 轉錄
 app.post('/admin/force-openai/:caseId', async (req, res) => {
   try {
