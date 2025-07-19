@@ -149,38 +149,50 @@ async function testRedisConnection() {
   }
 }
 
-// 執行連接測試
-testRedisConnection().catch(error => {
-  logger.error(`Redis 連接測試失敗: ${error.message}`);
-});
+let audioQueue;
 
-const audioQueue = new Queue('audio transcription', {
-  redis: redisConfig
-});
+// 執行連接測試並初始化 Queue
+testRedisConnection()
+  .then(() => {
+    // Redis 連接成功後初始化 Queue
+    audioQueue = new Queue('audio transcription', {
+      redis: redisConfig
+    });
+    
+    logger.info('✅ Bull Queue 初始化完成');
+    
+    // Redis 連接錯誤處理
+    audioQueue.on('error', (error) => {
+      logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
+    });
 
-// Redis 連接錯誤處理
-audioQueue.on('error', (error) => {
-  logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
-});
+    audioQueue.on('waiting', (jobId) => {
+      logger.info(`任務 ${jobId} 進入等待佇列`);
+    });
 
-audioQueue.on('waiting', (jobId) => {
-  logger.info(`任務 ${jobId} 進入等待佇列`);
-});
+    audioQueue.on('active', (job) => {
+      logger.info(`任務 ${job.id} 開始處理`);
+    });
 
-audioQueue.on('active', (job) => {
-  logger.info(`任務 ${job.id} 開始處理`);
-});
+    audioQueue.on('completed', (job, result) => {
+      logger.info(`任務 ${job.id} 完成處理`);
+    });
 
-audioQueue.on('completed', (job, result) => {
-  logger.info(`任務 ${job.id} 完成處理`);
-});
+    audioQueue.on('failed', (job, err) => {
+      logger.error(`任務 ${job.id} 處理失敗: ${err.message}`);
+    });
 
-audioQueue.on('failed', (job, err) => {
-  logger.error(`任務 ${job.id} 處理失敗: ${err.message}`);
-});
+    // 設定 Queue 處理器
+    audioQueue.process(async (job) => {
+      return await processTranscriptionJob(job);
+    });
+  })
+  .catch(error => {
+    logger.error(`Redis 連接測試失敗: ${error.message}`);
+  });
 
-// 設定 Queue 處理器
-audioQueue.process(async (job) => {
+// 任務處理函數
+async function processTranscriptionJob(job) {
   const { fileId, fileName, caseId, forceOpenAI } = job.data;
   
   try {
@@ -285,7 +297,7 @@ audioQueue.process(async (job) => {
     
     throw error;
   }
-});
+}
 
 // OpenAI API 轉錄函數
 async function transcribeWithOpenAI(localFilePath) {
@@ -364,6 +376,12 @@ app.post('/transcribe', async (req, res) => {
       });
     }
     
+    if (!audioQueue) {
+      return res.status(503).json({
+        error: 'Redis 連接尚未準備就緒，請稍後再試'
+      });
+    }
+    
     // 將任務加入佇列
     const job = await audioQueue.add({
       fileId,
@@ -429,20 +447,31 @@ app.post('/quality/check', (req, res) => {
 });
 
 // 健康檢查端點
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const report = qualityMonitor.generateQualityReport();
+  
+  let queueStats = {};
+  if (audioQueue) {
+    try {
+      queueStats = {
+        waiting: await audioQueue.waiting(),
+        active: await audioQueue.active(),
+        completed: await audioQueue.completed(),
+        failed: await audioQueue.failed()
+      };
+    } catch (error) {
+      queueStats = { error: 'Queue stats unavailable' };
+    }
+  } else {
+    queueStats = { status: 'Redis connection not ready' };
+  }
   
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    queue: {
-      waiting: audioQueue.waiting,
-      active: audioQueue.active,
-      completed: audioQueue.completed,
-      failed: audioQueue.failed
-    },
+    queue: queueStats,
     quality: {
       systemHealth: report.alerts.systemHealth,
       averageQuality: report.overview.averageQuality,
@@ -454,6 +483,10 @@ app.get('/health', (req, res) => {
 // 取得任務狀態
 app.get('/job/:jobId', async (req, res) => {
   try {
+    if (!audioQueue) {
+      return res.status(503).json({ error: 'Redis 連接尚未準備就緒' });
+    }
+    
     const job = await audioQueue.getJob(req.params.jobId);
     
     if (!job) {
@@ -629,6 +662,10 @@ app.post('/admin/force-openai/:caseId', async (req, res) => {
       return res.status(400).json({ error: '缺少 fileId' });
     }
     
+    if (!audioQueue) {
+      return res.status(503).json({ error: 'Redis 連接尚未準備就緒' });
+    }
+    
     // 強制使用 OpenAI API
     const job = await audioQueue.add({
       fileId,
@@ -692,22 +729,30 @@ process.on('unhandledRejection', (reason, promise) => {
 // 優雅關閉
 process.on('SIGTERM', () => {
   logger.info('收到 SIGTERM，正在關閉服務器...');
-  audioQueue.close().then(() => {
+  if (audioQueue) {
+    audioQueue.close().then(() => {
+      process.exit(0);
+    }).catch((error) => {
+      logger.error(`關閉佇列時發生錯誤: ${error.message}`);
+      process.exit(1);
+    });
+  } else {
     process.exit(0);
-  }).catch((error) => {
-    logger.error(`關閉佇列時發生錯誤: ${error.message}`);
-    process.exit(1);
-  });
+  }
 });
 
 process.on('SIGINT', () => {
   logger.info('收到 SIGINT，正在關閉服務器...');
-  audioQueue.close().then(() => {
+  if (audioQueue) {
+    audioQueue.close().then(() => {
+      process.exit(0);
+    }).catch((error) => {
+      logger.error(`關閉佇列時發生錯誤: ${error.message}`);
+      process.exit(1);
+    });
+  } else {
     process.exit(0);
-  }).catch((error) => {
-    logger.error(`關閉佇列時發生錯誤: ${error.message}`);
-    process.exit(1);
-  });
+  }
 });
 
 module.exports = app;
