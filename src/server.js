@@ -390,7 +390,10 @@ app.post('/transcribe', async (req, res) => {
       forceOpenAI: forceOpenAI || false
     }, {
       attempts: 3,
-      backoff: 'exponential',
+      backoff: {
+        type: 'exponential',
+        delay: 2000
+      },
       delay: 2000
     });
     
@@ -674,7 +677,11 @@ app.post('/admin/force-openai/:caseId', async (req, res) => {
       forceOpenAI: true
     }, {
       attempts: 1,
-      priority: 10 // 高優先權
+      priority: 10, // 高優先權
+      backoff: {
+        type: 'fixed',
+        delay: 1000
+      }
     });
     
     res.json({

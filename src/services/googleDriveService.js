@@ -30,7 +30,21 @@ function initializeDriveClient() {
       throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY 環境變數未設置');
     }
     
-    const credentials = JSON.parse(SERVICE_ACCOUNT_KEY);
+    let credentials;
+    try {
+      credentials = JSON.parse(SERVICE_ACCOUNT_KEY);
+      
+      // 修復 private key 格式問題
+      if (credentials.private_key) {
+        credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+      }
+      
+      logger.info('Google 服務帳戶憑證解析成功');
+    } catch (parseError) {
+      logger.error(`解析 Google 服務帳戶 JSON 失敗: ${parseError.message}`);
+      throw new Error(`無效的 Google 服務帳戶 JSON 格式: ${parseError.message}`);
+    }
+    
     const auth = new google.auth.GoogleAuth({
       credentials: credentials,
       scopes: SCOPES
