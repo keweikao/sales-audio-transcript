@@ -1,17 +1,19 @@
-# 使用官方 Node.js 18 映像
-FROM node:18-alpine
+# 使用 Ubuntu 基礎映像獲得完整的編解碼器支援
+FROM node:18-bullseye
 
-# 安裝 FFmpeg 和其他必要套件
-RUN apk add --no-cache \
+# 更新套件列表並安裝完整的 FFmpeg 支援
+RUN apt-get update && apt-get install -y \
     ffmpeg \
-    ffmpeg-dev \
-    lame \
-    opus \
+    libavcodec-extra \
     python3 \
-    make \
-    g++ \
+    python3-pip \
+    build-essential \
     curl \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
+
+# 驗證 FFmpeg 安裝和編解碼器支援
+RUN ffmpeg -codecs 2>/dev/null | grep mp3 && echo "✅ MP3 codec available" || echo "❌ MP3 codec not found"
+RUN ffmpeg -encoders 2>/dev/null | grep mp3 && echo "✅ MP3 encoder available" || echo "❌ MP3 encoder not found"
 
 # 設定工作目錄
 WORKDIR /app
