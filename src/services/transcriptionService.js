@@ -129,7 +129,7 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
     }
     
     const ffmpegCommand = ffmpeg(inputPath)
-      .audioCodec('mp3')
+      .audioCodec('libmp3lame')
       .audioBitrate(finalBitrate)
       .audioFrequency(finalSampleRate)
       .audioChannels(config.channels)
@@ -164,7 +164,14 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
       .on('error', (err) => {
         clearTimeout(timeout);
         logger.error(`iPhone 錄音預處理失敗: ${err.message}`);
-        reject(err);
+        
+        // 如果是編解碼器問題，直接返回原始檔案
+        if (err.message.includes('codec') || err.message.includes('mp3')) {
+          logger.warn('編解碼器不可用，跳過預處理，使用原始檔案');
+          resolve(inputPath);
+        } else {
+          reject(err);
+        }
       })
       .run();
   });
@@ -279,7 +286,7 @@ async function extractChunk(inputPath, startTime, endTime) {
     ffmpeg(inputPath)
       .seekInput(startTime)
       .duration(endTime - startTime)
-      .audioCodec('mp3')
+      .audioCodec('libmp3lame')
       .audioBitrate(IPHONE_OPTIMIZED_CONFIG.preprocessing.bitrate)
       .audioFrequency(IPHONE_OPTIMIZED_CONFIG.preprocessing.sampleRate)
       .audioChannels(1)

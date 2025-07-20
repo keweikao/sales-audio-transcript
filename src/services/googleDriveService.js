@@ -93,6 +93,7 @@ async function downloadFromGoogleDrive(fileId, fileName = 'audio_file') {
     return new Promise((resolve, reject) => {
       const writeStream = fs.createWriteStream(localFilePath);
       let downloadedSize = 0;
+      let lastReportedProgress = 0;
       
       response.data.on('error', (error) => {
         logger.error(`檔案下載失敗: ${error.message}`);
@@ -102,8 +103,11 @@ async function downloadFromGoogleDrive(fileId, fileName = 'audio_file') {
       response.data.on('data', (chunk) => {
         downloadedSize += chunk.length;
         const progress = (downloadedSize / (fileSize * 1024 * 1024)) * 100;
-        if (progress % 20 < 5) { // 每20%報告一次進度
+        
+        // 只有當進度增加超過20%時才報告
+        if (progress - lastReportedProgress >= 20) {
           logger.info(`下載進度: ${progress.toFixed(1)}%`);
+          lastReportedProgress = Math.floor(progress / 20) * 20;
         }
       });
       
