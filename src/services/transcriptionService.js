@@ -107,6 +107,12 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
   return new Promise((resolve, reject) => {
     logger.info(`iPhone 錄音預處理開始: ${inputPath}`);
     
+    // 設定超時機制 (5分鐘)
+    const timeout = setTimeout(() => {
+      logger.error('iPhone 錄音預處理超時');
+      reject(new Error('Audio preprocessing timeout'));
+    }, 5 * 60 * 1000);
+    
     const config = IPHONE_OPTIMIZED_CONFIG.preprocessing;
     
     // 根據原始音檔品質調整參數
@@ -140,6 +146,7 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
         }
       })
       .on('end', async () => {
+        clearTimeout(timeout);
         try {
           const processedInfo = await getAudioInfo(outputPath);
           
@@ -155,6 +162,7 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
         }
       })
       .on('error', (err) => {
+        clearTimeout(timeout);
         logger.error(`iPhone 錄音預處理失敗: ${err.message}`);
         reject(err);
       })
@@ -327,17 +335,38 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     
     logger.info(`🎯 轉錄進度: 10% - 正在載入 Whisper 模型...`);
     
-    const transcript = await nodeWhisper(audioPath, {
-      modelName: config.modelName,
-      language: 'zh',
-      verbose: true,
-      removeWavFileAfterTranscription: true,
-      withCuda: false,
-      whisperOptions: {
-        ...config.whisperOptions,
-        initial_prompt: initialPrompt
+    // 增加進度監控定時器
+    const progressInterval = setInterval(() => {
+      if (progressCallback) {
+        progressCallback(60, '🔄 Whisper 模型正在處理音頻...');
       }
-    });
+      logger.info(`🎯 轉錄進度: 60% - Whisper 模型正在處理音頻...`);
+    }, 30000); // 每30秒更新一次進度
+    
+    // 使用 Promise.race 實現超時機制
+    const transcribeWithTimeout = () => {
+      return Promise.race([
+        nodeWhisper(audioPath, {
+          modelName: config.modelName,
+          language: 'zh',
+          verbose: true,
+          removeWavFileAfterTranscription: true,
+          withCuda: false,
+          whisperOptions: {
+            ...config.whisperOptions,
+            initial_prompt: initialPrompt
+          }
+        }),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Whisper transcription timeout after 10 minutes')), 10 * 60 * 1000) // 10分鐘超時
+        )
+      ]);
+    };
+    
+    const transcript = await transcribeWithTimeout();
+    
+    // 清除進度監控定時器
+    clearInterval(progressInterval);
     
     if (progressCallback) {
       progressCallback(90, '轉錄完成，正在後處理...');
