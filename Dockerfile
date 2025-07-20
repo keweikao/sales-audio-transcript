@@ -4,9 +4,13 @@ FROM node:18-alpine
 # 安裝 FFmpeg 和其他必要套件
 RUN apk add --no-cache \
     ffmpeg \
+    ffmpeg-dev \
+    lame \
+    opus \
     python3 \
     make \
     g++ \
+    curl \
     && rm -rf /var/cache/apk/*
 
 # 設定工作目錄
