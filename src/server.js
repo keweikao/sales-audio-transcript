@@ -366,6 +366,61 @@ app.get('/', (req, res) => {
 });
 
 // API 路由
+
+// 測試 Google Drive 下載功能
+app.post('/test-download', async (req, res) => {
+  try {
+    const { fileId, fileName } = req.body;
+    
+    if (!fileId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing fileId parameter' 
+      });
+    }
+    
+    logger.info(`🔍 測試下載 - File ID: ${fileId}, Name: ${fileName || '未提供'}`);
+    
+    // 只執行下載，不進行轉錄
+    const googleDriveService = require('./services/googleDriveService');
+    const startTime = Date.now();
+    
+    const localFilePath = await googleDriveService.downloadFromGoogleDrive(fileId, fileName);
+    
+    const downloadTime = (Date.now() - startTime) / 1000;
+    
+    // 檢查檔案資訊
+    const fs = require('fs');
+    const fileStats = fs.statSync(localFilePath);
+    const fileSizeMB = fileStats.size / (1024 * 1024);
+    
+    logger.info(`✅ 下載測試成功 - 檔案大小: ${fileSizeMB.toFixed(2)}MB, 下載時間: ${downloadTime}秒`);
+    
+    // 檢查檔案格式
+    const path = require('path');
+    const fileExtension = path.extname(localFilePath).toLowerCase();
+    
+    res.json({
+      success: true,
+      message: '下載測試成功',
+      data: {
+        localFilePath: localFilePath,
+        fileSizeMB: fileSizeMB.toFixed(2),
+        downloadTimeSeconds: downloadTime,
+        fileExtension: fileExtension,
+        originalFileName: fileName
+      }
+    });
+    
+  } catch (error) {
+    logger.error(`❌ 下載測試失敗: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.post('/transcribe', async (req, res) => {
   try {
     const { fileId, fileName, caseId, forceOpenAI } = req.body;
