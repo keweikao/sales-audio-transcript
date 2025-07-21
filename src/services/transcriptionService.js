@@ -392,7 +392,9 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
       ]);
     };
     
-    const transcript = await transcribeWithTimeout();
+    // 由於 node-whisper 參數相容性問題，直接降級到 OpenAI API
+    logger.warn('由於 node-whisper 參數相容性問題，直接使用 OpenAI API');
+    throw new Error('Using OpenAI API for compatibility');
     
     // 清除進度監控定時器
     clearInterval(progressInterval);
