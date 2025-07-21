@@ -25,12 +25,10 @@ const IPHONE_OPTIMIZED_CONFIG = {
     bitrate: 96, // 針對 iPhone 錄音的最佳比特率
     sampleRate: 24000, // 稍高的採樣率保持細節
     channels: 1,
-    // 針對 iPhone 錄音的濾波器
+    // 簡化濾波器，避免複雜濾鏡鏈問題
     filters: [
-      'highpass=f=60',    // 去除極低頻雜訊
-      'lowpass=f=8000',   // 保留語音頻率範圍
-      'compand=0.02,0.2:-40,-40,-30,-10,-20,-8,-10,-7,-3,-3:0.1:0.1', // 動態範圍壓縮
-      'speechnorm=e=12.5:r=0.00005:l=1' // 語音標準化
+      'highpass=f=80',    // 去除低頻雜訊
+      'lowpass=f=8000'    // 保留語音頻率範圍
     ]
   },
   // Whisper 模型參數優化
