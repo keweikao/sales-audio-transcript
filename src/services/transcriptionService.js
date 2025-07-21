@@ -1,7 +1,21 @@
 const fs = require('fs');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
-const { nodeWhisper } = require('node-whisper');
+// 嘗試多種導入方式以兼容不同版本
+let nodeWhisper;
+try {
+  nodeWhisper = require('node-whisper').nodeWhisper;
+} catch (e) {
+  try {
+    nodeWhisper = require('node-whisper');
+  } catch (e2) {
+    try {
+      nodeWhisper = require('node-whisper').default;
+    } catch (e3) {
+      console.error('Failed to import node-whisper:', e3);
+    }
+  }
+}
 const tmp = require('tmp');
 const winston = require('winston');
 
