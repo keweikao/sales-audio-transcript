@@ -13,30 +13,8 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-// 檢查 node-whisper 套件的導出內容
-let nodeWhisper;
-try {
-  const whisperModule = require('node-whisper');
-  logger.info(`node-whisper 模組內容: ${Object.keys(whisperModule)}`);
-  logger.info(`node-whisper 類型: ${typeof whisperModule}`);
-  
-  // 嘗試不同的導入方式
-  if (typeof whisperModule === 'function') {
-    nodeWhisper = whisperModule;
-    logger.info('使用直接導入方式');
-  } else if (whisperModule.nodeWhisper && typeof whisperModule.nodeWhisper === 'function') {
-    nodeWhisper = whisperModule.nodeWhisper;
-    logger.info('使用 .nodeWhisper 屬性');
-  } else if (whisperModule.default && typeof whisperModule.default === 'function') {
-    nodeWhisper = whisperModule.default;
-    logger.info('使用 .default 屬性');
-  } else {
-    logger.error('無法找到有效的 nodeWhisper 函數');
-    logger.error(`可用屬性: ${JSON.stringify(Object.keys(whisperModule))}`);
-  }
-} catch (e) {
-  logger.error(`node-whisper 導入失敗: ${e.message}`);
-}
+// node-whisper 已移除，直接使用 OpenAI API
+logger.info('使用 OpenAI API 進行音頻轉錄');
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
@@ -55,20 +33,11 @@ const IPHONE_OPTIMIZED_CONFIG = {
       'lowpass=f=8000'    // 保留語音頻率範圍
     ]
   },
-  // Whisper 模型參數優化
-  whisperOptions: {
-    word_timestamps: true, // 開啟詞級時間戳提高準確度
-    fp16: false, // 使用 fp32 提高穩定性
-    temperature: 0.0, // 確定性輸出
-    best_of: 3, // 生成3個候選結果選最佳
-    beam_size: 5, // 增加搜索寬度
-    patience: 2.0, // 提高搜索耐心
-    length_penalty: 1.0, // 長度懲罰
-    compression_ratio_threshold: 2.4,
-    logprob_threshold: -1.0,
-    no_speech_threshold: 0.6,
-    condition_on_previous_text: true, // 利用上下文
-    initial_prompt: "這是一段中文商務對話錄音，包含專業術語和人名地名。" // 中文提示
+  // OpenAI API 參數配置
+  openaiOptions: {
+    language: 'zh',
+    temperature: 0.0,
+    response_format: 'text'
   }
 };
 
@@ -352,65 +321,16 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     const startTime = Date.now();
     const config = IPHONE_OPTIMIZED_CONFIG;
     
-    // 針對 iPhone 錄音的特殊提示
-    const initialPrompt = isFromiPhone ? 
-      "這是一段來自 iPhone 的高品質中文商務對話錄音，包含專業術語、人名和地名。請準確轉錄。" :
-      config.whisperOptions.initial_prompt;
-    
-    // 轉錄進度回調
-    if (progressCallback) {
-      progressCallback(10, '正在載入 Whisper 模型...');
-    }
-    
-    logger.info(`🎯 轉錄進度: 10% - 正在載入 Whisper 模型...`);
-    
-    // 增加進度監控定時器
-    const progressInterval = setInterval(() => {
-      if (progressCallback) {
-        progressCallback(60, '🔄 Whisper 模型正在處理音頻...');
-      }
-      logger.info(`🎯 轉錄進度: 60% - Whisper 模型正在處理音頻...`);
-    }, 30000); // 每30秒更新一次進度
-    
-    // 使用 Promise.race 實現超時機制
-    const transcribeWithTimeout = () => {
-      return Promise.race([
-        nodeWhisper(audioPath, {
-          modelName: config.modelName,
-          language: 'zh',
-          verbose: true,
-          removeWavFileAfterTranscription: true,
-          withCuda: false,
-          whisperOptions: {
-            ...config.whisperOptions,
-            initial_prompt: initialPrompt
-          }
-        }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper transcription timeout after 3 minutes')), 3 * 60 * 1000) // 3分鐘超時
-        )
-      ]);
-    };
-    
-    // 由於 node-whisper 參數相容性問題，直接降級到 OpenAI API
-    logger.warn('由於 node-whisper 參數相容性問題，直接使用 OpenAI API');
+    // 直接使用 OpenAI API，不使用本地 Whisper
+    logger.info('🔄 跳過本地 Whisper，直接使用 OpenAI API 轉錄');
     
     // 返回空結果，但保留預處理檔案路徑供 OpenAI API 使用
     return {
       transcript: '', 
-      quality: { score: 0, confidence: 0.0, details: 'Skipped for OpenAI compatibility' },
+      quality: { score: 0, confidence: 0.0, details: 'Using OpenAI API' },
       audioInfo: audioInfo,
       processedFilePath: processedPath
     };
-    
-    // 清除進度監控定時器
-    clearInterval(progressInterval);
-    
-    if (progressCallback) {
-      progressCallback(90, '轉錄完成，正在後處理...');
-    }
-    
-    logger.info(`🎯 轉錄進度: 90% - 轉錄完成，正在後處理...`);
     
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;
