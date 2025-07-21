@@ -191,12 +191,19 @@ testRedisConnection()
     logger.error(`Redis 連接測試失敗: ${error.message}`);
   });
 
-// 任務處理函數
+// 任務處理函數（帶重試機制）
 async function processTranscriptionJob(job) {
   const { fileId, fileName, caseId, forceOpenAI } = job.data;
+  const maxRetries = 2; // 最多重試2次（總共3次嘗試）
+  let lastError = null;
   
-  try {
-    logger.info(`🎬 開始處理轉錄任務 - Case ID: ${caseId}`);
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      if (attempt > 1) {
+        logger.info(`🔄 重試轉錄任務 (第${attempt}次嘗試) - Case ID: ${caseId}`);
+      } else {
+        logger.info(`🎬 開始處理轉錄任務 - Case ID: ${caseId}`);
+      }
     logger.info(`📋 任務資訊: 檔案 ${fileName}, 強制 OpenAI: ${forceOpenAI ? '是' : '否'}`);
     
     // 1. 從 Google Drive 下載音檔
@@ -273,33 +280,49 @@ async function processTranscriptionJob(job) {
     logger.info(`🎉 轉錄任務完成 - Case ID: ${caseId}`);
     logger.info(`📈 最終結果: 方法=${processingMethod}, 品質=${quality.score}/100, 文字長度=${transcript.length}字元`);
     
-    return { 
-      success: true, 
-      transcript, 
-      caseId, 
-      quality, 
-      processingMethod 
-    };
-    
-  } catch (error) {
-    logger.error(`轉錄失敗 - Case ID: ${caseId}, Error: ${error.message}`);
-    
-    // 記錄失敗
-    qualityMonitor.recordTranscription({
-      success: false,
-      caseId: caseId,
-      error: error.message
-    });
-    
-    // 更新狀態為失敗
-    try {
-      await updateGoogleSheet(caseId, `轉錄失敗: ${error.message}`, 'Failed');
-    } catch (updateError) {
-      logger.error(`更新失敗狀態失敗: ${updateError.message}`);
+      return { 
+        success: true, 
+        transcript, 
+        caseId, 
+        quality, 
+        processingMethod 
+      };
+      
+    } catch (error) {
+      lastError = error;
+      logger.error(`轉錄失敗 (第${attempt}次嘗試) - Case ID: ${caseId}, Error: ${error.message}`);
+      
+      // 如果還有重試次數，繼續嘗試
+      if (attempt < maxRetries + 1) {
+        logger.info(`⏱️ 等待 5 秒後重試...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        continue;
+      }
+      
+      // 所有重試都失敗了
+      break;
     }
-    
-    throw error;
   }
+  
+  // 所有嘗試都失敗，記錄最終失敗
+  logger.error(`❌ 轉錄最終失敗 - Case ID: ${caseId}, 已重試${maxRetries}次`);
+  
+  // 記錄失敗
+  qualityMonitor.recordTranscription({
+    success: false,
+    caseId: caseId,
+    error: lastError.message,
+    retries: maxRetries
+  });
+  
+  // 更新狀態為轉錄失敗
+  try {
+    await updateGoogleSheet(caseId, `轉錄失敗 (已重試${maxRetries}次): ${lastError.message}`, '轉錄失敗');
+  } catch (updateError) {
+    logger.error(`更新失敗狀態失敗: ${updateError.message}`);
+  }
+  
+  throw lastError;
 }
 
 // OpenAI API 轉錄函數
