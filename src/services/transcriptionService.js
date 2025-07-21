@@ -1,21 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
-// 嘗試多種導入方式以兼容不同版本
-let nodeWhisper;
-try {
-  nodeWhisper = require('node-whisper').nodeWhisper;
-} catch (e) {
-  try {
-    nodeWhisper = require('node-whisper');
-  } catch (e2) {
-    try {
-      nodeWhisper = require('node-whisper').default;
-    } catch (e3) {
-      console.error('Failed to import node-whisper:', e3);
-    }
-  }
-}
 const tmp = require('tmp');
 const winston = require('winston');
 
@@ -27,6 +12,31 @@ const logger = winston.createLogger({
   ),
   transports: [new winston.transports.Console()]
 });
+
+// 檢查 node-whisper 套件的導出內容
+let nodeWhisper;
+try {
+  const whisperModule = require('node-whisper');
+  logger.info(`node-whisper 模組內容: ${Object.keys(whisperModule)}`);
+  logger.info(`node-whisper 類型: ${typeof whisperModule}`);
+  
+  // 嘗試不同的導入方式
+  if (typeof whisperModule === 'function') {
+    nodeWhisper = whisperModule;
+    logger.info('使用直接導入方式');
+  } else if (whisperModule.nodeWhisper && typeof whisperModule.nodeWhisper === 'function') {
+    nodeWhisper = whisperModule.nodeWhisper;
+    logger.info('使用 .nodeWhisper 屬性');
+  } else if (whisperModule.default && typeof whisperModule.default === 'function') {
+    nodeWhisper = whisperModule.default;
+    logger.info('使用 .default 屬性');
+  } else {
+    logger.error('無法找到有效的 nodeWhisper 函數');
+    logger.error(`可用屬性: ${JSON.stringify(Object.keys(whisperModule))}`);
+  }
+} catch (e) {
+  logger.error(`node-whisper 導入失敗: ${e.message}`);
+}
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
