@@ -198,6 +198,7 @@ async function processTranscriptionJob(job) {
   const { fileId, fileName, caseId, forceOpenAI, batchIndex, totalBatchSize } = job.data;
   const maxRetries = 2; // 最多重試2次（總共3次嘗試）
   let lastError = null;
+  let tempDir = null; // 記錄臨時目錄，用於清理
   
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     try {
@@ -228,7 +229,7 @@ async function processTranscriptionJob(job) {
     // 3. 預處理音檔（壓縮和優化音質）
     logger.info(`🔧 步驟 3/5: 正在預處理音檔...`);
     const tmp = require('tmp');
-    const tempDir = tmp.dirSync({ unsafeCleanup: false }); // 不自動清理，供後續使用
+    tempDir = tmp.dirSync({ unsafeCleanup: false }); // 不自動清理，供後續使用
     const processedPath = require('path').join(tempDir.name, 'processed.mp3');
     
     await preprocessiPhoneAudio(localFilePath, processedPath, audioInfo);
@@ -263,12 +264,7 @@ async function processTranscriptionJob(job) {
     logger.info(`📈 最終結果: 方法=${processingMethod}, 品質=${quality.score}/100, 文字長度=${transcript.length}字元`);
     
     // 清理臨時文件
-    try {
-      tempDir.removeCallback();
-      logger.info(`🗑️ 臨時文件清理完成`);
-    } catch (cleanupError) {
-      logger.warn(`⚠️ 臨時文件清理失敗: ${cleanupError.message}`);
-    }
+    cleanupTempDirectory(tempDir);
     
       return { 
         success: true, 
@@ -310,6 +306,11 @@ async function processTranscriptionJob(job) {
     await updateGoogleSheet(caseId, `轉錄失敗 (已重試${maxRetries}次): ${lastError.message}`, '轉錄失敗');
   } catch (updateError) {
     logger.error(`更新失敗狀態失敗: ${updateError.message}`);
+  }
+  
+  // 清理臨時文件（如果存在）
+  if (tempDir) {
+    cleanupTempDirectory(tempDir);
   }
   
   throw lastError;
@@ -434,6 +435,42 @@ async function transcribeWithOpenAI(localFilePath) {
   } catch (error) {
     logger.error(`OpenAI API 轉錄失敗: ${error.message}`);
     throw error;
+  }
+}
+
+// 清理臨時目錄的輔助函數
+function cleanupTempDirectory(tempDir) {
+  try {
+    // 遞歸清理目錄中的所有文件
+    const path = require('path');
+    const cleanupDirectory = (dirPath) => {
+      if (fs.existsSync(dirPath)) {
+        const files = fs.readdirSync(dirPath);
+        for (const file of files) {
+          const filePath = path.join(dirPath, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isDirectory()) {
+            cleanupDirectory(filePath);
+            fs.rmdirSync(filePath);
+          } else {
+            fs.unlinkSync(filePath);
+          }
+        }
+      }
+    };
+    
+    cleanupDirectory(tempDir.name);
+    tempDir.removeCallback();
+    logger.info(`🗑️ 臨時文件清理完成`);
+  } catch (cleanupError) {
+    logger.warn(`⚠️ 臨時文件清理失敗: ${cleanupError.message}`);
+    // 如果清理失敗，嘗試使用系統的 rm 命令
+    try {
+      require('child_process').execSync(`rm -rf "${tempDir.name}"`, { timeout: 5000 });
+      logger.info(`🗑️ 使用系統命令清理臨時文件成功`);
+    } catch (rmError) {
+      logger.warn(`⚠️ 系統命令清理也失敗: ${rmError.message}`);
+    }
   }
 }
 
