@@ -79,36 +79,34 @@ async function updateGoogleSheet(caseId, transcript, status = 'Completed', metad
       throw new Error(`找不到 Case ID: ${caseId} 的記錄`);
     }
     
-    // 準備更新資料
-    const currentTime = new Date().toISOString();
-    const updateData = [
-      transcript, // 轉錄結果
-      status, // 狀態
-      currentTime, // 更新時間
-      metadata.processingMethod || '', // 處理方法
-      metadata.qualityScore || '', // 品質分數
-      metadata.confidence || '' // 信心度
+    // 只更新 F 欄 (狀態) 和 G 欄 (轉錄文字)，不覆蓋 A-E 欄的 n8n 數據
+    const batchUpdates = [
+      {
+        range: `F${rowIndex + 1}`, // F 欄：狀態
+        values: [[status]]
+      },
+      {
+        range: `G${rowIndex + 1}`, // G 欄：轉錄文字
+        values: [[transcript]]
+      }
     ];
     
-    // 更新試算表
-    const range = `A${rowIndex + 1}:F${rowIndex + 1}`; // 假設有6個欄位
-    
-    await sheets.spreadsheets.values.update({
+    // 批次更新，確保不覆蓋其他欄位
+    await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
-      range: range,
-      valueInputOption: 'USER_ENTERED',
       resource: {
-        values: [updateData]
+        valueInputOption: 'USER_ENTERED',
+        data: batchUpdates
       }
     });
     
-    logger.info(`Google Sheets 更新完成 - Case ID: ${caseId}, 狀態: ${status}`);
+    logger.info(`Google Sheets 更新完成 - Case ID: ${caseId}, 狀態: ${status}, 轉錄長度: ${transcript.length} 字元`);
     
     return {
       success: true,
       caseId,
       rowIndex: rowIndex + 1,
-      updateTime: currentTime
+      updateTime: new Date().toISOString()
     };
     
   } catch (error) {
