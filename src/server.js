@@ -10,7 +10,7 @@ const OpenAI = require('openai');
 const fs = require('fs');
 const tmp = require('tmp');
 const ffmpeg = require('fluent-ffmpeg');
-const { assessTranscriptionQuality } = require('./services/transcriptionService');
+const { assessTranscriptionQuality, getAudioInfo, preprocessiPhoneAudio } = require('./services/transcriptionService');
 const { downloadFromGoogleDrive } = require('./services/googleDriveService');
 const { updateGoogleSheet } = require('./services/googleSheetsService');
 const QualityMonitor = require('./services/qualityMonitor');
@@ -211,24 +211,39 @@ async function processTranscriptionJob(job) {
     logger.info(`📋 任務資訊: 檔案 ${fileName}, 強制 OpenAI: ${forceOpenAI ? '是' : '否'}`);
     
     // 1. 從 Google Drive 下載音檔
-    logger.info(`📥 步驟 1/4: 正在從 Google Drive 下載音檔...`);
+    logger.info(`📥 步驟 1/5: 正在從 Google Drive 下載音檔...`);
     const localFilePath = await downloadFromGoogleDrive(fileId, fileName);
     
-    let transcript = '';
-    let quality = null;
-    let processingMethod = 'openai-api';
+    // 2. 分析音檔資訊
+    logger.info(`📊 步驟 2/5: 正在分析音檔資訊...`);
+    const audioInfo = await getAudioInfo(localFilePath);
+    const isFromiPhone = audioInfo.isFromiPhone;
     
-    // 2. 使用 OpenAI API 進行轉錄
-    logger.info(`🤖 步驟 2/4: 使用 OpenAI API 轉錄...`);
-    logger.info('🔧 直接使用 OpenAI API 轉錄');
+    logger.info(`🎵 音檔資訊:`);
+    logger.info(`- 格式: ${audioInfo.format} (${audioInfo.codec})`);
+    logger.info(`- 時長: ${(audioInfo.duration/60).toFixed(1)} 分鐘`);
+    logger.info(`- 大小: ${audioInfo.sizeMB.toFixed(2)} MB`);
+    logger.info(`- iPhone 錄音: ${isFromiPhone ? '是' : '否'}`);
     
-    const result = await transcribeWithOpenAI(localFilePath);
-    transcript = result.transcript;
-    quality = result.quality;
-    processingMethod = 'openai-api';
+    // 3. 預處理音檔（壓縮和優化音質）
+    logger.info(`🔧 步驟 3/5: 正在預處理音檔...`);
+    const tmp = require('tmp');
+    const tempDir = tmp.dirSync({ unsafeCleanup: false }); // 不自動清理，供後續使用
+    const processedPath = require('path').join(tempDir.name, 'processed.mp3');
     
-    // 3. 記錄品質監控
-    logger.info(`📊 步驟 3/4: 記錄品質監控...`);
+    await preprocessiPhoneAudio(localFilePath, processedPath, audioInfo);
+    
+    // 4. 使用 OpenAI API 進行轉錄（會自動判斷文件大小）
+    logger.info(`🤖 步驟 4/5: 使用 OpenAI API 轉錄...`);
+    logger.info('🔧 使用預處理後的音檔進行 OpenAI API 轉錄');
+    
+    const result = await transcribeWithOpenAI(processedPath);
+    const transcript = result.transcript;
+    const quality = result.quality;
+    const processingMethod = 'openai-api-preprocessed';
+    
+    // 5. 記錄品質監控
+    logger.info(`📊 步驟 5/5: 記錄品質監控...`);
     qualityMonitor.recordTranscription({
       success: true,
       caseId: caseId,
@@ -236,8 +251,8 @@ async function processTranscriptionJob(job) {
       processingMethod: processingMethod
     });
     
-    // 4. 更新 Google Sheets
-    logger.info(`📝 步驟 4/4: 更新 Google Sheets...`);
+    // 6. 更新 Google Sheets
+    logger.info(`📝 最終步驟: 更新 Google Sheets...`);
     await updateGoogleSheet(caseId, transcript, 'Completed', {
       processingMethod: processingMethod,
       qualityScore: quality.score,
@@ -246,6 +261,14 @@ async function processTranscriptionJob(job) {
     
     logger.info(`🎉 轉錄任務完成 - Case ID: ${caseId}`);
     logger.info(`📈 最終結果: 方法=${processingMethod}, 品質=${quality.score}/100, 文字長度=${transcript.length}字元`);
+    
+    // 清理臨時文件
+    try {
+      tempDir.removeCallback();
+      logger.info(`🗑️ 臨時文件清理完成`);
+    } catch (cleanupError) {
+      logger.warn(`⚠️ 臨時文件清理失敗: ${cleanupError.message}`);
+    }
     
       return { 
         success: true, 
