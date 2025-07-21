@@ -184,8 +184,9 @@ testRedisConnection()
       logger.error(`任務 ${job.id} 處理失敗: ${err.message}`);
     });
 
-    // 設定 Queue 處理器
-    audioQueue.process(async (job) => {
+    // 設定 Queue 處理器 - 支持並發處理
+    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 3; // 預設同時處理3個任務
+    audioQueue.process(CONCURRENT_JOBS, async (job) => {
       return await processTranscriptionJob(job);
     });
   })
@@ -195,16 +196,18 @@ testRedisConnection()
 
 // 任務處理函數（帶重試機制）
 async function processTranscriptionJob(job) {
-  const { fileId, fileName, caseId, forceOpenAI } = job.data;
+  const { fileId, fileName, caseId, forceOpenAI, batchIndex, totalBatchSize } = job.data;
   const maxRetries = 2; // 最多重試2次（總共3次嘗試）
   let lastError = null;
   
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     try {
+      const batchInfo = totalBatchSize ? `[批次 ${batchIndex + 1}/${totalBatchSize}] ` : '';
+      
       if (attempt > 1) {
-        logger.info(`🔄 重試轉錄任務 (第${attempt}次嘗試) - Case ID: ${caseId}`);
+        logger.info(`🔄 ${batchInfo}重試轉錄任務 (第${attempt}次嘗試) - Case ID: ${caseId}`);
       } else {
-        logger.info(`🎬 開始處理轉錄任務 - Case ID: ${caseId}`);
+        logger.info(`🎬 ${batchInfo}開始處理轉錄任務 - Case ID: ${caseId}`);
       }
     logger.info(`📋 任務資訊: 檔案 ${fileName}, 強制 OpenAI: ${forceOpenAI ? '是' : '否'}`);
     
@@ -491,9 +494,11 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     endpoints: {
       transcribe: 'POST /transcribe',
+      batchTranscribe: 'POST /transcribe/batch',
       health: 'GET /health',
       quality: 'GET /quality',
-      jobStatus: 'GET /job/:jobId'
+      jobStatus: 'GET /job/:jobId',
+      batchStatus: 'POST /batch/status'
     },
     description: '專為 iPhone 音檔優化的 AI 轉錄服務，支援 Faster-Whisper 和 OpenAI API 智能降級'
   });
@@ -604,6 +609,108 @@ app.post('/transcribe', async (req, res) => {
   }
 });
 
+// 批量轉錄端點
+app.post('/transcribe/batch', async (req, res) => {
+  try {
+    const { files, forceOpenAI } = req.body;
+    
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: '缺少必要參數: files 陣列'
+      });
+    }
+    
+    if (!audioQueue) {
+      return res.status(503).json({
+        error: 'Redis 連接尚未準備就緒，請稍後再試'
+      });
+    }
+    
+    const maxBatchSize = parseInt(process.env.MAX_BATCH_SIZE) || 20;
+    if (files.length > maxBatchSize) {
+      return res.status(400).json({
+        error: `批量處理最多支持 ${maxBatchSize} 個檔案，當前: ${files.length}`
+      });
+    }
+    
+    const jobs = [];
+    const errors = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
+      if (!file.fileId || !file.caseId) {
+        errors.push({
+          index: i,
+          error: '缺少必要參數: fileId 或 caseId',
+          file: file
+        });
+        continue;
+      }
+      
+      try {
+        // 為批量任務添加延遲，避免同時處理過多任務
+        const delayMs = i * 1000; // 每個任務延遲1秒
+        
+        const job = await audioQueue.add({
+          fileId: file.fileId,
+          fileName: file.fileName || 'unknown_audio_file',
+          caseId: file.caseId,
+          forceOpenAI: forceOpenAI || false,
+          batchIndex: i,
+          totalBatchSize: files.length
+        }, {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 3000
+          },
+          delay: delayMs,
+          priority: 5 - Math.min(4, Math.floor(i / 5)) // 前面的任務優先級稍高
+        });
+        
+        jobs.push({
+          jobId: job.id,
+          caseId: file.caseId,
+          fileName: file.fileName,
+          batchIndex: i
+        });
+        
+        logger.info(`批量任務 ${i + 1}/${files.length} 已加入佇列 - Job ID: ${job.id}, Case ID: ${file.caseId}`);
+        
+      } catch (jobError) {
+        errors.push({
+          index: i,
+          error: jobError.message,
+          file: file
+        });
+      }
+    }
+    
+    logger.info(`批量轉錄任務提交完成 - 成功: ${jobs.length}, 失敗: ${errors.length}`);
+    
+    res.status(202).json({
+      message: `批量轉錄任務已提交`,
+      summary: {
+        total: files.length,
+        submitted: jobs.length,
+        failed: errors.length
+      },
+      jobs: jobs,
+      errors: errors.length > 0 ? errors : undefined,
+      processingMethod: forceOpenAI ? 'openai-api' : 'faster-whisper',
+      estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
+    });
+    
+  } catch (error) {
+    logger.error(`批量提交任務失敗: ${error.message}`);
+    res.status(500).json({
+      error: '內部伺服器錯誤',
+      message: error.message
+    });
+  }
+});
+
 // 品質監控端點
 app.get('/quality', (req, res) => {
   try {
@@ -696,6 +803,73 @@ app.get('/job/:jobId', async (req, res) => {
     
   } catch (error) {
     logger.error(`取得任務狀態失敗: ${error.message}`);
+    res.status(500).json({ error: '內部伺服器錯誤' });
+  }
+});
+
+// 批量任務狀態監控端點
+app.post('/batch/status', async (req, res) => {
+  try {
+    const { jobIds } = req.body;
+    
+    if (!jobIds || !Array.isArray(jobIds)) {
+      return res.status(400).json({ error: '缺少 jobIds 陣列' });
+    }
+    
+    if (!audioQueue) {
+      return res.status(503).json({ error: 'Redis 連接尚未準備就緒' });
+    }
+    
+    const jobStatuses = [];
+    
+    for (const jobId of jobIds) {
+      try {
+        const job = await audioQueue.getJob(jobId);
+        
+        if (job) {
+          jobStatuses.push({
+            jobId: job.id,
+            caseId: job.data.caseId,
+            fileName: job.data.fileName,
+            state: await job.getState(),
+            progress: job.progress,
+            result: job.returnvalue,
+            failedReason: job.failedReason,
+            batchIndex: job.data.batchIndex,
+            totalBatchSize: job.data.totalBatchSize
+          });
+        } else {
+          jobStatuses.push({
+            jobId: jobId,
+            error: '任務不存在'
+          });
+        }
+      } catch (jobError) {
+        jobStatuses.push({
+          jobId: jobId,
+          error: jobError.message
+        });
+      }
+    }
+    
+    // 統計概要
+    const summary = {
+      total: jobStatuses.length,
+      completed: jobStatuses.filter(j => j.state === 'completed').length,
+      active: jobStatuses.filter(j => j.state === 'active').length,
+      waiting: jobStatuses.filter(j => j.state === 'waiting').length,
+      failed: jobStatuses.filter(j => j.state === 'failed').length,
+      delayed: jobStatuses.filter(j => j.state === 'delayed').length
+    };
+    
+    res.json({
+      summary,
+      jobs: jobStatuses,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error(`取得批量任務狀態失敗: ${error.message}`);
     res.status(500).json({ error: '內部伺服器錯誤' });
   }
 });
