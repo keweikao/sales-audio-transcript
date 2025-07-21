@@ -40,8 +40,8 @@ try {
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
-  // 使用 large 模型以獲得最佳準確度
-  modelName: 'large',
+  // 使用 base 模型以獲得更快速度
+  modelName: 'base',
   // 針對 iPhone 錄音的分塊策略
   chunkDuration: 12 * 60, // 12分鐘片段，平衡記憶體和準確度
   // 音檔預處理參數
@@ -387,7 +387,7 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
           }
         }),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper transcription timeout after 10 minutes')), 10 * 60 * 1000) // 10分鐘超時
+          setTimeout(() => reject(new Error('Whisper transcription timeout after 3 minutes')), 3 * 60 * 1000) // 3分鐘超時
         )
       ]);
     };

@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y \
 # 安裝 OpenAI Whisper
 RUN pip3 install --no-cache-dir openai-whisper
 
-# 預下載 Whisper large 模型（可選，但建議）
-RUN python3 -c "import whisper; whisper.load_model('large')"
+# 驗證 Whisper 安裝
+RUN whisper --help
 
 # 驗證 FFmpeg 安裝和編解碼器支援
 RUN ffmpeg -codecs 2>/dev/null | grep mp3 && echo "✅ MP3 codec available" || echo "❌ MP3 codec not found"
