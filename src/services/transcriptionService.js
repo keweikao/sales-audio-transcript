@@ -321,15 +321,17 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     const startTime = Date.now();
     const config = IPHONE_OPTIMIZED_CONFIG;
     
+    // 獲取音檔資訊
+    const audioInfo = await getAudioInfo(audioPath);
+    
     // 直接使用 OpenAI API，不使用本地 Whisper
     logger.info('🔄 跳過本地 Whisper，直接使用 OpenAI API 轉錄');
     
-    // 返回空結果，但保留預處理檔案路徑供 OpenAI API 使用
+    // 返回空結果，但保留音檔資訊
     return {
-      transcript: '', 
+      text: '', 
       quality: { score: 0, confidence: 0.0, details: 'Using OpenAI API' },
-      audioInfo: audioInfo,
-      processedFilePath: processedPath
+      audioInfo: audioInfo
     };
     
     const endTime = Date.now();

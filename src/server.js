@@ -8,6 +8,8 @@ const winston = require('winston');
 const Queue = require('bull');
 const OpenAI = require('openai');
 const fs = require('fs');
+const tmp = require('tmp');
+const ffmpeg = require('fluent-ffmpeg');
 const { transcribeAudio } = require('./services/transcriptionService');
 const { downloadFromGoogleDrive } = require('./services/googleDriveService');
 const { updateGoogleSheet } = require('./services/googleSheetsService');
@@ -325,7 +327,7 @@ async function processTranscriptionJob(job) {
   throw lastError;
 }
 
-// OpenAI API 轉錄函數
+// OpenAI API 轉錄函數（支援大文件自動分割）
 async function transcribeWithOpenAI(localFilePath) {
   try {
     logger.info(`開始使用 OpenAI API 轉錄: ${localFilePath}`);
@@ -337,27 +339,100 @@ async function transcribeWithOpenAI(localFilePath) {
       throw new Error(`音檔檔案不存在: ${localFilePath}`);
     }
     
-    // 使用 OpenAI Whisper API 轉錄
-    const audioFile = fs.createReadStream(localFilePath);
+    // 檢查檔案大小
+    const fileStats = fs.statSync(localFilePath);
+    const fileSizeMB = fileStats.size / (1024 * 1024);
+    const MAX_FILE_SIZE_MB = 24; // 留一些緩衝空間，避免接近25MB限制
     
-    const response = await openai.audio.transcriptions.create({
-      model: 'whisper-1',
-      file: audioFile,
-      language: 'zh',
-      response_format: 'text',
-      temperature: 0.0
-    });
+    logger.info(`檔案大小: ${fileSizeMB.toFixed(2)}MB`);
     
-    const endTime = Date.now();
-    const processingTime = (endTime - startTime) / 1000;
+    let transcript = '';
+    let totalProcessingTime = 0;
     
-    const transcript = response.trim();
+    if (fileSizeMB <= MAX_FILE_SIZE_MB) {
+      // 檔案大小符合限制，直接轉錄
+      logger.info('檔案大小符合限制，直接使用 OpenAI API 轉錄');
+      
+      const audioFile = fs.createReadStream(localFilePath);
+      
+      const response = await openai.audio.transcriptions.create({
+        model: 'whisper-1',
+        file: audioFile,
+        language: 'zh',
+        response_format: 'text',
+        temperature: 0.0
+      });
+      
+      transcript = response.trim();
+      totalProcessingTime = (Date.now() - startTime) / 1000;
+      
+    } else {
+      // 檔案過大，需要分割處理
+      logger.info(`檔案過大 (${fileSizeMB.toFixed(2)}MB > ${MAX_FILE_SIZE_MB}MB)，開始分割處理`);
+      
+      const { getAudioInfo } = require('./services/transcriptionService');
+      const audioInfo = await getAudioInfo(localFilePath);
+      const totalDuration = audioInfo.duration;
+      
+      // 根據檔案大小計算分割數量
+      const numChunks = Math.ceil(fileSizeMB / MAX_FILE_SIZE_MB);
+      const chunkDuration = totalDuration / numChunks;
+      
+      logger.info(`將分割為 ${numChunks} 個片段，每段約 ${(chunkDuration/60).toFixed(1)} 分鐘`);
+      
+      const transcripts = [];
+      
+      for (let i = 0; i < numChunks; i++) {
+        const startTime_chunk = i * chunkDuration;
+        const endTime_chunk = Math.min((i + 1) * chunkDuration, totalDuration);
+        
+        logger.info(`🎯 處理 OpenAI 分片 ${i + 1}/${numChunks}: ${(startTime_chunk/60).toFixed(1)}-${(endTime_chunk/60).toFixed(1)} 分鐘`);
+        
+        try {
+          // 創建音檔片段
+          const chunkPath = await createAudioChunk(localFilePath, startTime_chunk, endTime_chunk, i);
+          
+          // 轉錄片段
+          const audioFile = fs.createReadStream(chunkPath);
+          
+          const response = await openai.audio.transcriptions.create({
+            model: 'whisper-1',
+            file: audioFile,
+            language: 'zh',
+            response_format: 'text',
+            temperature: 0.0
+          });
+          
+          const chunkTranscript = response.trim();
+          transcripts.push(chunkTranscript);
+          
+          logger.info(`✅ 分片 ${i + 1} 轉錄完成: ${chunkTranscript.length} 字元`);
+          
+          // 清理臨時檔案
+          try {
+            fs.unlinkSync(chunkPath);
+          } catch (cleanupError) {
+            logger.warn(`清理臨時檔案失敗: ${cleanupError.message}`);
+          }
+          
+        } catch (chunkError) {
+          logger.error(`分片 ${i + 1} 轉錄失敗: ${chunkError.message}`);
+          transcripts.push(`[分片 ${i + 1} 轉錄失敗]`);
+        }
+      }
+      
+      // 合併所有轉錄結果
+      transcript = transcripts.join('\n\n');
+      totalProcessingTime = (Date.now() - startTime) / 1000;
+      
+      logger.info(`🎉 所有分片處理完成，共 ${numChunks} 個片段`);
+    }
     
     // 評估轉錄品質
     const quality = assessTranscriptionQuality(transcript);
     
-    logger.info(`OpenAI API 轉錄完成:`)
-    logger.info(`- 處理時間: ${processingTime.toFixed(2)} 秒`);
+    logger.info(`OpenAI API 轉錄完成:`);
+    logger.info(`- 處理時間: ${totalProcessingTime.toFixed(2)} 秒`);
     logger.info(`- 文字長度: ${transcript.length} 字元`);
     logger.info(`- 品質評分: ${quality.score}/100`);
     logger.info(`- 信心度: ${quality.confidence.toFixed(2)}`);
@@ -365,13 +440,46 @@ async function transcribeWithOpenAI(localFilePath) {
     return {
       transcript: transcript,
       quality: quality,
-      processingTime: processingTime
+      processingTime: totalProcessingTime
     };
     
   } catch (error) {
     logger.error(`OpenAI API 轉錄失敗: ${error.message}`);
     throw error;
   }
+}
+
+// 創建音檔片段的輔助函數
+async function createAudioChunk(inputPath, startTime, endTime, chunkIndex) {
+  const ffmpeg = require('fluent-ffmpeg');
+  const tmp = require('tmp');
+  
+  const chunkPath = tmp.tmpNameSync({ postfix: `_openai_chunk_${chunkIndex}.mp3` });
+  
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .seekInput(startTime)
+      .duration(endTime - startTime)
+      .audioCodec('libmp3lame')
+      .audioBitrate(96) // 使用較低比特率確保檔案大小
+      .audioFrequency(24000)
+      .audioChannels(1)
+      .output(chunkPath)
+      .on('start', (commandLine) => {
+        logger.info(`創建音檔片段: ${commandLine}`);
+      })
+      .on('end', () => {
+        const stats = fs.statSync(chunkPath);
+        const sizeMB = stats.size / (1024 * 1024);
+        logger.info(`音檔片段創建完成: ${sizeMB.toFixed(2)}MB`);
+        resolve(chunkPath);
+      })
+      .on('error', (err) => {
+        logger.error(`創建音檔片段失敗: ${err.message}`);
+        reject(err);
+      })
+      .run();
+  });
 }
 
 // 根路由 - 服務資訊
