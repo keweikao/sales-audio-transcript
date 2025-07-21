@@ -1,26 +1,15 @@
-# 使用 Ubuntu 基礎映像獲得完整的編解碼器支援
-FROM node:18-bullseye
+# 使用輕量化 Alpine 映像以加快構建
+FROM node:18-alpine
 
-# 更新套件列表並安裝完整的 FFmpeg 支援和 Whisper
-RUN apt-get update && apt-get install -y \
+# 安裝必要套件 (移除 Whisper 相關，因為直接使用 OpenAI API)
+RUN apk add --no-cache \
     ffmpeg \
-    libavcodec-extra \
     python3 \
-    python3-pip \
-    build-essential \
     curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/cache/apk/*
 
-# 安裝 OpenAI Whisper
-RUN pip3 install --no-cache-dir openai-whisper
-
-# 驗證 Whisper 安裝
-RUN whisper --help
-
-# 驗證 FFmpeg 安裝和編解碼器支援
-RUN ffmpeg -codecs 2>/dev/null | grep mp3 && echo "✅ MP3 codec available" || echo "❌ MP3 codec not found"
-RUN ffmpeg -encoders 2>/dev/null | grep mp3 && echo "✅ MP3 encoder available" || echo "❌ MP3 encoder not found"
+# 驗證 FFmpeg 安裝
+RUN ffmpeg -version
 
 # 設定工作目錄
 WORKDIR /app
