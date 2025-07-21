@@ -592,7 +592,8 @@ async function transcribeAudio(inputPath) {
     return {
       transcript: cleanedTranscript,
       quality: totalQuality,
-      audioInfo: audioInfo
+      audioInfo: audioInfo,
+      processedFilePath: processedPath  // 提供預處理後的檔案路徑給 OpenAI API 使用
     };
     
   } catch (error) {

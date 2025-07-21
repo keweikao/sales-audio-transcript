@@ -230,7 +230,10 @@ async function processTranscriptionJob(job) {
         logger.warn(`品質不佳，嘗試使用 OpenAI API 重新轉錄`);
         
         try {
-          const openaiResult = await transcribeWithOpenAI(localFilePath);
+          // 使用預處理後的檔案（如果存在）或原始檔案
+          const fileForOpenAI = result.processedFilePath || localFilePath;
+          logger.info(`OpenAI API 使用檔案: ${fileForOpenAI}`);
+          const openaiResult = await transcribeWithOpenAI(fileForOpenAI);
           
           // 比較結果品質
           if (openaiResult.quality.score > quality.score) {
