@@ -1,7 +1,7 @@
 # 使用 Ubuntu 基礎映像獲得完整的編解碼器支援
 FROM node:18-bullseye
 
-# 更新套件列表並安裝完整的 FFmpeg 支援
+# 更新套件列表並安裝完整的 FFmpeg 支援和 Whisper
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libavcodec-extra \
@@ -9,7 +9,14 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     build-essential \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# 安裝 OpenAI Whisper
+RUN pip3 install --no-cache-dir openai-whisper
+
+# 預下載 Whisper large 模型（可選，但建議）
+RUN python3 -c "import whisper; whisper.load_model('large')"
 
 # 驗證 FFmpeg 安裝和編解碼器支援
 RUN ffmpeg -codecs 2>/dev/null | grep mp3 && echo "✅ MP3 codec available" || echo "❌ MP3 codec not found"
