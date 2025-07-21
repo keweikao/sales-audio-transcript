@@ -394,7 +394,14 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     
     // 由於 node-whisper 參數相容性問題，直接降級到 OpenAI API
     logger.warn('由於 node-whisper 參數相容性問題，直接使用 OpenAI API');
-    throw new Error('Using OpenAI API for compatibility');
+    
+    // 返回空結果，但保留預處理檔案路徑供 OpenAI API 使用
+    return {
+      transcript: '', 
+      quality: { score: 0, confidence: 0.0, details: 'Skipped for OpenAI compatibility' },
+      audioInfo: audioInfo,
+      processedFilePath: processedPath
+    };
     
     // 清除進度監控定時器
     clearInterval(progressInterval);
@@ -600,12 +607,9 @@ async function transcribeAudio(inputPath) {
     logger.error(`❌ 轉錄流程失敗: ${error.message}`);
     throw error;
   } finally {
-    // 清理臨時目錄
-    try {
-      tempDir.removeCallback();
-    } catch (cleanupError) {
-      logger.warn(`⚠️ 清理臨時目錄失敗: ${cleanupError.message}`);
-    }
+    // 注意：為了讓 OpenAI API 能使用預處理檔案，暫時不清理臨時目錄
+    // 清理會由系統自動處理或在 OpenAI API 完成後手動清理
+    logger.info(`⚠️ 保留臨時目錄供 OpenAI API 使用: ${tempDir.name}`);
   }
 }
 
