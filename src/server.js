@@ -10,11 +10,10 @@ const OpenAI = require('openai');
 const fs = require('fs');
 const tmp = require('tmp');
 const ffmpeg = require('fluent-ffmpeg');
-const { transcribeAudio } = require('./services/transcriptionService');
+const { assessTranscriptionQuality } = require('./services/transcriptionService');
 const { downloadFromGoogleDrive } = require('./services/googleDriveService');
 const { updateGoogleSheet } = require('./services/googleSheetsService');
 const QualityMonitor = require('./services/qualityMonitor');
-const { assessTranscriptionQuality } = require('./services/transcriptionService');
 
 // 設定日誌
 const logger = winston.createLogger({
@@ -217,53 +216,16 @@ async function processTranscriptionJob(job) {
     
     let transcript = '';
     let quality = null;
-    let processingMethod = 'faster-whisper';
+    let processingMethod = 'openai-api';
     
-    // 2. 決定使用哪種轉錄方法
-    logger.info(`🤖 步驟 2/4: 選擇轉錄方法...`);
-    if (forceOpenAI) {
-      // 如果強制使用 OpenAI API
-      logger.info('🔧 使用 OpenAI API 轉錄（強制模式）');
-      const result = await transcribeWithOpenAI(localFilePath);
-      transcript = result.transcript;
-      quality = result.quality;
-      processingMethod = 'openai-api';
-    } else {
-      // 先嘗試 Faster-Whisper
-      logger.info('🔧 使用 Faster-Whisper 轉錄');
-      const result = await transcribeAudio(localFilePath);
-      transcript = result.transcript;
-      quality = result.quality;
-      
-      // 檢查是否需要降級到 OpenAI API
-      const fallbackDecision = qualityMonitor.shouldFallbackToOpenAI(quality);
-      
-      if (fallbackDecision.shouldFallback) {
-        logger.warn(`品質不佳，嘗試使用 OpenAI API 重新轉錄`);
-        
-        try {
-          // 使用預處理後的檔案（如果存在）或原始檔案
-          const fileForOpenAI = result.processedFilePath || localFilePath;
-          logger.info(`OpenAI API 使用檔案: ${fileForOpenAI}`);
-          const openaiResult = await transcribeWithOpenAI(fileForOpenAI);
-          
-          // 比較結果品質
-          if (openaiResult.quality.score > quality.score) {
-            logger.info(`OpenAI API 結果更好，使用 OpenAI 結果`);
-            transcript = openaiResult.transcript;
-            quality = openaiResult.quality;
-            processingMethod = 'openai-api-fallback';
-          } else {
-            logger.info(`Faster-Whisper 結果較佳，保持原結果`);
-            processingMethod = 'faster-whisper-confirmed';
-          }
-        } catch (openaiError) {
-          logger.error(`OpenAI API 降級失敗: ${openaiError.message}`);
-          // 保持 Faster-Whisper 結果
-          processingMethod = 'faster-whisper-fallback-failed';
-        }
-      }
-    }
+    // 2. 使用 OpenAI API 進行轉錄
+    logger.info(`🤖 步驟 2/4: 使用 OpenAI API 轉錄...`);
+    logger.info('🔧 直接使用 OpenAI API 轉錄');
+    
+    const result = await transcribeWithOpenAI(localFilePath);
+    transcript = result.transcript;
+    quality = result.quality;
+    processingMethod = 'openai-api';
     
     // 3. 記錄品質監控
     logger.info(`📊 步驟 3/4: 記錄品質監控...`);
@@ -500,7 +462,7 @@ app.get('/', (req, res) => {
       jobStatus: 'GET /job/:jobId',
       batchStatus: 'POST /batch/status'
     },
-    description: '專為 iPhone 音檔優化的 AI 轉錄服務，支援 Faster-Whisper 和 OpenAI API 智能降級'
+    description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 OpenAI API 提供高品質轉錄，支援大文件自動分割和批量處理'
   });
 });
 
@@ -597,7 +559,7 @@ app.post('/transcribe', async (req, res) => {
       message: '轉錄任務已提交',
       jobId: job.id,
       caseId,
-      processingMethod: forceOpenAI ? 'openai-api' : 'faster-whisper'
+      processingMethod: 'openai-api'
     });
     
   } catch (error) {
@@ -698,7 +660,7 @@ app.post('/transcribe/batch', async (req, res) => {
       },
       jobs: jobs,
       errors: errors.length > 0 ? errors : undefined,
-      processingMethod: forceOpenAI ? 'openai-api' : 'faster-whisper',
+      processingMethod: 'openai-api',
       estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
     });
     
