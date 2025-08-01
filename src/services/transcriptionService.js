@@ -605,6 +605,10 @@ async function processAudioChunks(chunkFiles, isFromiPhone, progressCallback = n
  */
 function cleanupTranscript(transcript) {
   return transcript
+    .replace(/[^\u0000-\uFFFF]/g, '') // 移除超出基本多文種平面的符號
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // 移除控制字元
+    .replace(/�/g, '') // 移除亂碼符號
+    .replace(/([\u4e00-\u9fff])(?:[a-zA-Z]+)([\u4e00-\u9fff])/g, '$1$2') // 移除夾在中文間的英文字母
     .replace(/\[\s*\]/g, '') // 移除空白標記
     .replace(/\s+/g, ' ') // 合併多個空白
     .replace(/\n\s*\n\s*\n/g, '\n\n') // 合併多個換行
