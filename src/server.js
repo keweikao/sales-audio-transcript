@@ -352,7 +352,7 @@ async function transcribeWithOpenAI(localFilePath) {
         temperature: 0.0
       });
       
-      transcript = response.trim();
+      transcript = response.text.trim();
       totalProcessingTime = (Date.now() - startTime) / 1000;
       
     } else {
@@ -392,7 +392,7 @@ async function transcribeWithOpenAI(localFilePath) {
             temperature: 0.0
           });
           
-          const chunkTranscript = response.trim();
+          const chunkTranscript = response.text.trim();
           transcripts.push(chunkTranscript);
           
           logger.info(`✅ 分片 ${i + 1} 轉錄完成: ${chunkTranscript.length} 字元`);
