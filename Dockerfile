@@ -20,11 +20,17 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 在虛擬環境中安裝 faster-whisper 和相關套件
+# 更新 pip 並安裝基本套件
+RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel
+
+# 先安裝 CPU 版本的 PyTorch （faster-whisper 的依賴）
 RUN /opt/venv/bin/pip install --no-cache-dir \
-    faster-whisper \
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    torchaudio --index-url https://download.pytorch.org/whl/cpu
+    torch==2.1.0+cpu --index-url https://download.pytorch.org/whl/cpu
+RUN /opt/venv/bin/pip install --no-cache-dir \
+    torchaudio==2.1.0+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# 安裝 faster-whisper
+RUN /opt/venv/bin/pip install --no-cache-dir faster-whisper
 
 # 驗證安裝
 RUN node --version && npm --version \
