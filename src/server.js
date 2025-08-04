@@ -154,7 +154,23 @@ testRedisConnection()
   .then(() => {
     // Redis 連接成功後初始化 Queue
     audioQueue = new Queue('audio transcription', {
-      redis: redisConfig
+      redis: redisConfig,
+      // 配置佇列設定以處理長時間執行的任務
+      settings: {
+        stalledInterval: 120 * 1000,    // 2分鐘檢查一次是否卡住
+        maxStalledCount: 5,             // 允許最多5次標記為卡住
+        retryProcessDelay: 10 * 1000,   // 重試延遲10秒
+      },
+      defaultJobOptions: {
+        jobId: undefined,
+        removeOnComplete: 50,   // 保留最近50個完成的任務
+        removeOnFail: 20,       // 保留最近20個失敗的任務
+        attempts: 2,            // 預設重試2次
+        backoff: {
+          type: 'exponential',
+          delay: 5000,          // 基礎延遲5秒
+        },
+      }
     });
     
     logger.info('✅ Bull Queue 初始化完成');
@@ -450,12 +466,14 @@ app.post('/transcribe', async (req, res) => {
       caseId,
       forceOpenAI: forceOpenAI || false
     }, {
-      attempts: 3,
+      attempts: 2,            // 重試次數降低到2次
       backoff: {
         type: 'exponential',
-        delay: 2000
+        delay: 3000           // 增加重試延遲到3秒
       },
-      delay: 2000
+      delay: 1000,            // 初始延遲1秒
+      timeout: 15 * 60 * 1000, // 任務超時時間：15分鐘
+      jobId: `transcribe_${caseId}_${Date.now()}` // 唯一任務ID
     });
     
     logger.info(`任務已加入佇列 - Job ID: ${job.id}, Case ID: ${caseId}`);
@@ -527,13 +545,15 @@ app.post('/transcribe/batch', async (req, res) => {
           batchIndex: i,
           totalBatchSize: files.length
         }, {
-          attempts: 3,
+          attempts: 2,
           backoff: {
             type: 'exponential',
-            delay: 3000
+            delay: 5000           // 批量任務重試延遲更長
           },
           delay: delayMs,
-          priority: 5 - Math.min(4, Math.floor(i / 5)) // 前面的任務優先級稍高
+          timeout: 20 * 60 * 1000, // 批量任務超時時間更長：20分鐘
+          priority: 5 - Math.min(4, Math.floor(i / 5)), // 前面的任務優先級稍高
+          jobId: `batch_${file.caseId}_${i}_${Date.now()}` // 唯一批量任務ID
         });
         
         jobs.push({
