@@ -23,6 +23,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 更新 pip 並安裝基本套件
 RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel
 
+# 安裝 NumPy 以避免 PyTorch 警告
+RUN /opt/venv/bin/pip install --no-cache-dir numpy
+
 # 先安裝 CPU 版本的 PyTorch （faster-whisper 的依賴）
 RUN /opt/venv/bin/pip install --no-cache-dir \
     torch==2.1.0+cpu --index-url https://download.pytorch.org/whl/cpu

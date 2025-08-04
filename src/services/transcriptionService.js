@@ -379,34 +379,59 @@ async function transcribeWithFasterWhisper(
     // 構建 faster-whisper 命令（使用虛擬環境）
     const whisperOptions = config.whisperOptions;
     const pythonPath = process.env.VIRTUAL_ENV ? `${process.env.VIRTUAL_ENV}/bin/python` : '/opt/venv/bin/python';
-    const command = [
-      `${pythonPath} -c "`,
-      'from faster_whisper import WhisperModel;',
-      `model = WhisperModel(\"${whisperOptions.model}\");`,
-      `segments, info = model.transcribe(\"${audioPath}\",`,
-      `language=\"${whisperOptions.language}\",`,
-      `initial_prompt=\"${whisperOptions.initial_prompt}\",`,
-      `word_timestamps=${whisperOptions.word_timestamps},`,
-      `vad_filter=${whisperOptions.vad_filter});`,
-      'result = \"\".join([segment.text for segment in segments]);',
-      'print(result)"'
-    ].join(' ');
+    
+    // 使用臨時文件來避免字符串轉義問題
+    const { writeFileSync } = require('fs');
+    const tempScriptPath = `/tmp/whisper_script_${Date.now()}.py`;
+    
+    const pythonScript = `
+import sys
+from faster_whisper import WhisperModel
+
+# 初始化模型
+model = WhisperModel("${whisperOptions.model}")
+
+# 轉錄音檔
+segments, info = model.transcribe(
+    "${audioPath}",
+    language="${whisperOptions.language}",
+    initial_prompt="${whisperOptions.initial_prompt}",
+    word_timestamps=${whisperOptions.word_timestamps},
+    vad_filter=${whisperOptions.vad_filter}
+)
+
+# 輸出結果
+result = "".join([segment.text for segment in segments])
+print(result)
+`;
+    
+    writeFileSync(tempScriptPath, pythonScript);
+    const command = `${pythonPath} ${tempScriptPath}`;
 
     if (progressCallback) {
       progressCallback(40, "執行轉錄");
     }
 
-    logger.info(`執行命令: ${command}`);
-    const { stdout, stderr } = await execAsync(command, {
-      timeout: 300000, // 5分鐘超時
-      maxBuffer: 1024 * 1024 * 10 // 10MB buffer
-    });
+    logger.info(`執行 Python 腳本: ${tempScriptPath}`);
+    
+    try {
+      const { stdout, stderr } = await execAsync(command, {
+        timeout: 300000, // 5分鐘超時
+        maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+      });
 
-    if (stderr && !stderr.includes('WARNING')) {
-      logger.warn(`Whisper 警告: ${stderr}`);
-    }
+      if (stderr && !stderr.includes('WARNING') && !stderr.includes('UserWarning')) {
+        logger.warn(`Whisper 警告: ${stderr}`);
+      }
 
-    const transcript = stdout.trim();
+      const transcript = stdout.trim();
+      
+      // 清理臨時腳本文件
+      try {
+        require('fs').unlinkSync(tempScriptPath);
+      } catch (cleanupError) {
+        logger.warn(`清理臨時腳本失敗: ${cleanupError.message}`);
+      }
 
     if (progressCallback) {
       progressCallback(80, "分析轉錄品質");
@@ -436,6 +461,13 @@ async function transcribeWithFasterWhisper(
       audioInfo,
     };
   } catch (error) {
+    // 清理臨時腳本文件
+    try {
+      require('fs').unlinkSync(tempScriptPath);
+    } catch (cleanupError) {
+      // 忽略清理錯誤
+    }
+    
     logger.error(`❌ faster-whisper 轉錄失敗: ${error.message}`);
     throw error;
   }
