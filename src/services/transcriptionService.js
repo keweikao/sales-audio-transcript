@@ -396,40 +396,68 @@ async function transcribeWithFasterWhisper(
     const pythonScript = [
       'import sys',
       'import gc',
-      'from faster_whisper import WhisperModel',
+      'import os',
+      'import traceback',
       '',
-      '# 初始化模型 (優化記憶體使用)',
-      `model = WhisperModel(`,
-      `    "${whisperOptions.model}",`,
-      `    device="cpu",`,
-      `    compute_type="int8",  # 使用 int8 減少記憶體使用`,
-      `    cpu_threads=1,       # 降低並發線程數`,
-      `    num_workers=1        # 單一工作線程`,
-      `)`,
+      'try:',
+      '    from faster_whisper import WhisperModel',
+      '    print("✅ faster-whisper 模組載入成功", file=sys.stderr)',
       '',
-      '# 轉錄音檔',
-      'segments, info = model.transcribe(',
-      `    "${audioPath}",`,
-      `    language="${whisperOptions.language}",`,
-      `    initial_prompt="${whisperOptions.initial_prompt}",`,
-      `    word_timestamps=${pythonWordTimestamps},`,
-      `    vad_filter=${pythonVadFilter},`,
-      `    beam_size=1,         # 降低 beam size 減少記憶體`,
-      `    best_of=1           # 只生成一個結果`,
-      ')',
+      '    # 檢查音檔是否存在',
+      `    audio_path = "${audioPath}"`,
+      '    if not os.path.exists(audio_path):',
+      '        raise FileNotFoundError(f"音檔不存在: {audio_path}")',
+      '    print(f"✅ 音檔存在: {audio_path}", file=sys.stderr)',
       '',
-      '# 輸出結果',
-      'result = "".join([segment.text for segment in segments])',
-      'print(result)',
+      '    # 初始化模型 (優化記憶體使用)',
+      '    print("🔄 正在載入模型...", file=sys.stderr)',
+      `    model = WhisperModel(`,
+      `        "${whisperOptions.model}",`,
+      `        device="cpu",`,
+      `        compute_type="int8",  # 使用 int8 減少記憶體使用`,
+      `        cpu_threads=1,       # 降低並發線程數`,
+      `        num_workers=1        # 單一工作線程`,
+      `    )`,
+      '    print("✅ 模型載入成功", file=sys.stderr)',
       '',
-      '# 清理記憶體',
-      'del model',
-      'gc.collect()'
+      '    # 轉錄音檔',
+      '    print("🔄 開始轉錄...", file=sys.stderr)',
+      '    segments, info = model.transcribe(',
+      `        audio_path,`,
+      `        language="${whisperOptions.language}",`,
+      `        initial_prompt="${whisperOptions.initial_prompt}",`,
+      `        word_timestamps=${pythonWordTimestamps},`,
+      `        vad_filter=${pythonVadFilter},`,
+      `        beam_size=1,         # 降低 beam size 減少記憶體`,
+      `        best_of=1           # 只生成一個結果`,
+      '    )',
+      '    print("✅ 轉錄完成", file=sys.stderr)',
+      '',
+      '    # 輸出結果',
+      '    result = "".join([segment.text for segment in segments])',
+      '    print(result)  # 輸出轉錄結果到 stdout',
+      '',
+      '    # 清理記憶體',
+      '    del model',
+      '    gc.collect()',
+      '    print("✅ 記憶體清理完成", file=sys.stderr)',
+      '',
+      'except Exception as e:',
+      '    print(f"❌ Python 腳本執行失敗: {str(e)}", file=sys.stderr)',
+      '    print(f"❌ 錯誤類型: {type(e).__name__}", file=sys.stderr)',
+      '    traceback.print_exc(file=sys.stderr)',
+      '    sys.exit(1)'
     ].join('\n');
 
     // 寫入腳本文件
     require('fs').writeFileSync(tempScriptPath, pythonScript, 'utf8');
     logger.info(`Python 轉錄腳本已創建: ${tempScriptPath}`);
+    
+    // 調試模式：記錄腳本內容
+    const debugMode = process.env.DEBUG_MODE === 'true' || process.env.NODE_ENV === 'development';
+    if (debugMode) {
+      logger.info(`Python 腳本內容:\n${pythonScript}`);
+    }
 
     // 步驟 3: 執行轉錄
     if (progressCallback) {
@@ -445,9 +473,20 @@ async function transcribeWithFasterWhisper(
       encoding: 'utf8'
     });
 
-    // 處理 stderr 輸出（警告信息）
-    if (stderr && !stderr.includes('WARNING') && !stderr.includes('UserWarning')) {
-      logger.warn(`Whisper 警告訊息: ${stderr}`);
+    // 詳細記錄 Python 執行結果
+    logger.info(`Python 執行完成 - stdout 長度: ${stdout ? stdout.length : 0}, stderr 長度: ${stderr ? stderr.length : 0}`);
+    
+    // 處理 stderr 輸出（包含錯誤和警告信息）
+    if (stderr) {
+      if (stderr.includes('ERROR') || stderr.includes('Traceback') || stderr.includes('Exception')) {
+        logger.error(`Python 執行錯誤: ${stderr}`);
+        throw new Error(`Python 腳本執行失敗: ${stderr}`);
+      } else if (stderr.includes('WARNING') || stderr.includes('UserWarning')) {
+        logger.warn(`Python 警告訊息: ${stderr}`);
+      } else {
+        // 記錄所有其他 stderr 輸出以便調試
+        logger.info(`Python stderr 輸出: ${stderr}`);
+      }
     }
 
     // 步驟 4: 處理轉錄結果
