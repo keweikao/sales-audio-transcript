@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/opt/venv/bin/python
 """
 預載 faster-whisper 繁體中文模型腳本
 這個腳本會在應用啟動前預先下載和加載模型，避免首次使用時的延遲

@@ -376,10 +376,11 @@ async function transcribeWithFasterWhisper(
       progressCallback(20, "初始化 faster-whisper 模型");
     }
 
-    // 構建 faster-whisper 命令
+    // 構建 faster-whisper 命令（使用虛擬環境）
     const whisperOptions = config.whisperOptions;
+    const pythonPath = process.env.VIRTUAL_ENV ? `${process.env.VIRTUAL_ENV}/bin/python` : '/opt/venv/bin/python';
     const command = [
-      'python3 -c "',
+      `${pythonPath} -c "`,
       'from faster_whisper import WhisperModel;',
       `model = WhisperModel(\"${whisperOptions.model}\");`,
       `segments, info = model.transcribe(\"${audioPath}\",`,
