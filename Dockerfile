@@ -1,27 +1,31 @@
-# 使用 Python 基礎映像以支援 faster-whisper
-FROM python:3.10-slim
+# 使用 Node.js 基礎映像並添加 Python 支援
+FROM node:18-slim
 
-# 安裝 Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs
-
-# 安裝必要的系統套件
+# 安裝 Python 和系統依賴
 RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
     ffmpeg \
     curl \
     git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 安裝 faster-whisper 和相關 Python 套件
-RUN pip install --no-cache-dir \
-    faster-whisper==1.0.3 \
-    torch==2.1.0 \
-    torchaudio==2.1.0 \
-    --index-url https://download.pytorch.org/whl/cpu
+# 建立 Python 符號連結
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
-# 驗證 FFmpeg 和 faster-whisper 安裝
-RUN ffmpeg -version && python3 -c "from faster_whisper import WhisperModel; print('faster-whisper installed successfully')"
+# 安裝 faster-whisper 和相關 Python 套件
+RUN pip3 install --no-cache-dir \
+    faster-whisper \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# 驗證安裝
+RUN node --version && npm --version \
+    && python3 --version && pip3 --version \
+    && ffmpeg -version \
+    && python3 -c "from faster_whisper import WhisperModel; print('faster-whisper installed successfully')"
 
 # 設定工作目錄
 WORKDIR /app
@@ -57,15 +61,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 
 # 創建啟動腳本
 RUN echo '#!/bin/bash\n\
-echo "預載 faster-whisper 模型..."\n\
-python3 /app/scripts/preload-model.py\n\
-if [ $? -eq 0 ]; then\n\
-  echo "模型預載成功，啟動應用..."\n\
-  exec npm start\n\
-else\n\
-  echo "模型預載失敗，但仍嘗試啟動應用..."\n\
-  exec npm start\n\
-fi' > /app/start.sh && chmod +x /app/start.sh
+set -e\n\
+echo "🚀 啟動 faster-whisper 繁體中文轉錄服務..."\n\
+echo "🔍 檢查環境..."\n\
+node --version\n\
+npm --version\n\
+python3 --version\n\
+echo "🤖 預載 faster-whisper 模型..."\n\
+timeout 300 python3 /app/scripts/preload-model.py || echo "⚠️ 模型預載超時或失敗，繼續啟動服務"\n\
+echo "🎉 啟動 Node.js 應用..."\n\
+exec npm start' > /app/start.sh && chmod +x /app/start.sh
 
 # 啟動應用程式
 CMD ["/app/start.sh"]
