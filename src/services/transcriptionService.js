@@ -389,6 +389,10 @@ async function transcribeWithFasterWhisper(
     // 創建臨時 Python 腳本文件
     tempScriptPath = `/tmp/whisper_script_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`;
     
+    // 將 JavaScript 布林值轉換為 Python 布林值
+    const pythonWordTimestamps = whisperOptions.word_timestamps ? 'True' : 'False';
+    const pythonVadFilter = whisperOptions.vad_filter ? 'True' : 'False';
+    
     const pythonScript = [
       'import sys',
       'from faster_whisper import WhisperModel',
@@ -401,8 +405,8 @@ async function transcribeWithFasterWhisper(
       `    "${audioPath}",`,
       `    language="${whisperOptions.language}",`,
       `    initial_prompt="${whisperOptions.initial_prompt}",`,
-      `    word_timestamps=${whisperOptions.word_timestamps},`,
-      `    vad_filter=${whisperOptions.vad_filter}`,
+      `    word_timestamps=${pythonWordTimestamps},`,
+      `    vad_filter=${pythonVadFilter}`,
       ')',
       '',
       '# 輸出結果',
