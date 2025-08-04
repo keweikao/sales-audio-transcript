@@ -3,7 +3,9 @@ const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 const tmp = require("tmp");
 const winston = require("winston");
-const OpenAI = require("openai");
+const { exec } = require("child_process");
+const { promisify } = require("util");
+const execAsync = promisify(exec);
 
 const logger = winston.createLogger({
   level: "info",
@@ -14,13 +16,8 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-// 初始化 OpenAI 客戶端
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || "dummy-key",
-});
-
-// node-whisper 已移除，直接使用 OpenAI API
-logger.info("使用 OpenAI API 進行音頻轉錄");
+// 使用 faster-whisper 進行本地轉錄
+logger.info("使用 faster-whisper 進行本地音頻轉錄");
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
@@ -39,11 +36,21 @@ const IPHONE_OPTIMIZED_CONFIG = {
       "lowpass=f=8000", // 保留語音頻率範圍
     ],
   },
-  // OpenAI API 參數配置
-  openaiOptions: {
+  // faster-whisper 參數配置
+  whisperOptions: {
+    model: "asadfgglie/faster-whisper-large-v3-zh-TW", // 繁體中文優化模型
     language: "zh",
-    temperature: 0.0,
-    response_format: "text",
+    initial_prompt: "以下是一段繁體中文語音內容的轉錄：", // 強制繁體中文輸出
+    word_timestamps: false,
+    vad_filter: true,
+    vad_parameters: {
+      threshold: 0.5,
+      min_speech_duration_ms: 250,
+      max_speech_duration_s: 30,
+      min_silence_duration_ms: 2000,
+      window_size_samples: 1024,
+      speech_pad_ms: 400
+    }
   },
 };
 
@@ -344,9 +351,9 @@ async function splitByTime(inputPath, chunkDuration) {
 }
 
 /**
- * 使用優化參數的 Faster-Whisper 轉錄
+ * 使用 faster-whisper 進行轉錄
  */
-async function transcribeWithOptimizedWhisper(
+async function transcribeWithFasterWhisper(
   audioPath,
   isFromiPhone = false,
   progressCallback = null,
@@ -362,16 +369,47 @@ async function transcribeWithOptimizedWhisper(
     // 獲取音檔資訊
     const audioInfo = await getAudioInfo(audioPath);
 
-    // 使用 OpenAI API 進行轉錄
-    logger.info("🔄 使用 OpenAI API 轉錄");
+    // 使用 faster-whisper 進行轉錄
+    logger.info("🔄 使用 faster-whisper 本地轉錄");
 
-    const response = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model: process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
-      ...(config.openaiOptions || {}),
+    if (progressCallback) {
+      progressCallback(20, "初始化 faster-whisper 模型");
+    }
+
+    // 構建 faster-whisper 命令
+    const whisperOptions = config.whisperOptions;
+    const command = [
+      'python3 -c "',
+      'from faster_whisper import WhisperModel;',
+      `model = WhisperModel(\"${whisperOptions.model}\");`,
+      `segments, info = model.transcribe(\"${audioPath}\",`,
+      `language=\"${whisperOptions.language}\",`,
+      `initial_prompt=\"${whisperOptions.initial_prompt}\",`,
+      `word_timestamps=${whisperOptions.word_timestamps},`,
+      `vad_filter=${whisperOptions.vad_filter});`,
+      'result = \"\".join([segment.text for segment in segments]);',
+      'print(result)"'
+    ].join(' ');
+
+    if (progressCallback) {
+      progressCallback(40, "執行轉錄");
+    }
+
+    logger.info(`執行命令: ${command}`);
+    const { stdout, stderr } = await execAsync(command, {
+      timeout: 300000, // 5分鐘超時
+      maxBuffer: 1024 * 1024 * 10 // 10MB buffer
     });
 
-    const transcript = response.text || "";
+    if (stderr && !stderr.includes('WARNING')) {
+      logger.warn(`Whisper 警告: ${stderr}`);
+    }
+
+    const transcript = stdout.trim();
+
+    if (progressCallback) {
+      progressCallback(80, "分析轉錄品質");
+    }
 
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;
@@ -391,13 +429,13 @@ async function transcribeWithOptimizedWhisper(
     logger.info(`- 信心度: ${quality.confidence.toFixed(2)}`);
 
     return {
-      text: transcript.trim(),
+      text: transcript,
       processingTime,
       quality,
       audioInfo,
     };
   } catch (error) {
-    logger.error(`❌ OpenAI 轉錄失敗: ${error.message}`);
+    logger.error(`❌ faster-whisper 轉錄失敗: ${error.message}`);
     throw error;
   }
 }
@@ -534,7 +572,7 @@ async function transcribeAudio(inputPath) {
         logger.info(`📊 整體進度: ${overallProgress.toFixed(0)}% - ${message}`);
       };
 
-      const result = await transcribeWithOptimizedWhisper(
+      const result = await transcribeWithFasterWhisper(
         chunkFiles[0],
         isFromiPhone,
         progressCallback,
@@ -617,7 +655,7 @@ async function processAudioChunks(
         logger.info(`📊 片段 ${i + 1} 進度: ${percent}% - ${message}`);
       };
 
-      const result = await transcribeWithOptimizedWhisper(
+      const result = await transcribeWithFasterWhisper(
         chunkPath,
         isFromiPhone,
         chunkProgressCallback,

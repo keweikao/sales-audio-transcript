@@ -20,6 +20,24 @@ app.log
 data/
 tmp/
 temp/
+models/
+
+# Audio files (temporary processing)
+*.mp3
+*.m4a
+*.wav
+*.aac
+*.flac
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Google credentials (if accidentally committed)
+*credentials*.json
+*service-account*.json
 
 # OS generated files
 .DS_Store
