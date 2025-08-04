@@ -23,14 +23,20 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 更新 pip 並安裝基本套件
 RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel
 
-# 安裝 NumPy 以避免 PyTorch 警告
-RUN /opt/venv/bin/pip install --no-cache-dir numpy
+# 安裝相容的 NumPy 版本以避免 PyTorch 警告
+RUN /opt/venv/bin/pip install --no-cache-dir "numpy>=1.21.0,<1.25.0"
 
 # 先安裝 CPU 版本的 PyTorch （faster-whisper 的依賴）
+# 使用更穩定的版本組合
 RUN /opt/venv/bin/pip install --no-cache-dir \
-    torch==2.1.0+cpu --index-url https://download.pytorch.org/whl/cpu
+    torch==2.0.1+cpu --index-url https://download.pytorch.org/whl/cpu
 RUN /opt/venv/bin/pip install --no-cache-dir \
-    torchaudio==2.1.0+cpu --index-url https://download.pytorch.org/whl/cpu
+    torchaudio==2.0.2+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# 安裝其他相容性套件
+RUN /opt/venv/bin/pip install --no-cache-dir \
+    "scipy>=1.9.0,<1.12.0" \
+    "librosa>=0.9.0,<0.11.0"
 
 # 安裝 faster-whisper
 RUN /opt/venv/bin/pip install --no-cache-dir faster-whisper
@@ -65,6 +71,9 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV PYTHONPATH=/app
 ENV MODEL_CACHE_DIR=/app/models
+# 設定 Python 警告過濾
+ENV PYTHONWARNINGS="ignore::UserWarning"
+ENV TF_CPP_MIN_LOG_LEVEL=2
 
 # 暴露端口
 EXPOSE 3000
