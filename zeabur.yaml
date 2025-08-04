@@ -11,9 +11,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       
-    # 資源配置 (增加資源以支援 faster-whisper)
+    # 資源配置 (增加資源以支援 faster-whisper 和 60 分鐘音檔)
     resources:
-      memory: 4096 # 4GB 記憶體，支援 faster-whisper 模型加載
+      memory: 6144 # 6GB 記憶體，支援大型模型和長音檔處理
       cpu: 2000 # 2 CPU 核心，提升處理效能
       
     # 健康檢查

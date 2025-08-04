@@ -196,8 +196,8 @@ testRedisConnection()
       logger.error(`任務 ${job.id} 處理失敗: ${err.message}`);
     });
 
-    // 設定 Queue 處理器 - 支持並發處理
-    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 3; // 預設同時處理3個任務
+    // 設定 Queue 處理器 - 降低並發處理數量以節省記憶體
+    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 1; // 降低到同時處理1個任務
     audioQueue.process(CONCURRENT_JOBS, async (job) => {
       return await processTranscriptionJob(job);
     });
@@ -309,6 +309,16 @@ async function processTranscriptionJob(job) {
     if (tempDir) {
       cleanupTempDirectory(tempDir);
     }
+    
+    // 強制垃圾回收釋放記憶體
+    if (global.gc) {
+      global.gc();
+      logger.info(`🗑️ 手動觸發垃圾回收`);
+    }
+    
+    // 記錄記憶體使用狀況
+    const memUsage = process.memoryUsage();
+    logger.info(`📊 記憶體使用: RSS=${Math.round(memUsage.rss/1024/1024)}MB, Heap=${Math.round(memUsage.heapUsed/1024/1024)}MB`);
     
       return { 
         success: true, 

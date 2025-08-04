@@ -395,10 +395,17 @@ async function transcribeWithFasterWhisper(
     
     const pythonScript = [
       'import sys',
+      'import gc',
       'from faster_whisper import WhisperModel',
       '',
-      '# 初始化模型',
-      `model = WhisperModel("${whisperOptions.model}")`,
+      '# 初始化模型 (優化記憶體使用)',
+      `model = WhisperModel(`,
+      `    "${whisperOptions.model}",`,
+      `    device="cpu",`,
+      `    compute_type="int8",  # 使用 int8 減少記憶體使用`,
+      `    cpu_threads=1,       # 降低並發線程數`,
+      `    num_workers=1        # 單一工作線程`,
+      `)`,
       '',
       '# 轉錄音檔',
       'segments, info = model.transcribe(',
@@ -406,12 +413,18 @@ async function transcribeWithFasterWhisper(
       `    language="${whisperOptions.language}",`,
       `    initial_prompt="${whisperOptions.initial_prompt}",`,
       `    word_timestamps=${pythonWordTimestamps},`,
-      `    vad_filter=${pythonVadFilter}`,
+      `    vad_filter=${pythonVadFilter},`,
+      `    beam_size=1,         # 降低 beam size 減少記憶體`,
+      `    best_of=1           # 只生成一個結果`,
       ')',
       '',
       '# 輸出結果',
       'result = "".join([segment.text for segment in segments])',
-      'print(result)'
+      'print(result)',
+      '',
+      '# 清理記憶體',
+      'del model',
+      'gc.collect()'
     ].join('\n');
 
     // 寫入腳本文件
