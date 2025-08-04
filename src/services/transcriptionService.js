@@ -358,94 +358,106 @@ async function transcribeWithFasterWhisper(
   isFromiPhone = false,
   progressCallback = null,
 ) {
+  const startTime = Date.now();
+  let tempScriptPath = null;
+
   try {
     logger.info(
       `開始轉錄 ${isFromiPhone ? "iPhone 錄音" : "音檔"}: ${audioPath}`,
     );
 
-    const startTime = Date.now();
     const config = IPHONE_OPTIMIZED_CONFIG;
 
-    // 獲取音檔資訊
-    const audioInfo = await getAudioInfo(audioPath);
+    // 步驟 1: 獲取音檔資訊
+    if (progressCallback) {
+      progressCallback(10, "分析音檔資訊");
+    }
 
-    // 使用 faster-whisper 進行轉錄
+    const audioInfo = await getAudioInfo(audioPath);
     logger.info("🔄 使用 faster-whisper 本地轉錄");
 
+    // 步驟 2: 準備 Python 轉錄腳本
     if (progressCallback) {
-      progressCallback(20, "初始化 faster-whisper 模型");
+      progressCallback(20, "準備轉錄腳本");
     }
 
-    // 構建 faster-whisper 命令（使用虛擬環境）
     const whisperOptions = config.whisperOptions;
-    const pythonPath = process.env.VIRTUAL_ENV ? `${process.env.VIRTUAL_ENV}/bin/python` : '/opt/venv/bin/python';
+    const pythonPath = process.env.VIRTUAL_ENV 
+      ? `${process.env.VIRTUAL_ENV}/bin/python` 
+      : '/opt/venv/bin/python';
+
+    // 創建臨時 Python 腳本文件
+    tempScriptPath = `/tmp/whisper_script_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`;
     
-    // 使用臨時文件來避免字符串轉義問題
-    const { writeFileSync } = require('fs');
-    const tempScriptPath = `/tmp/whisper_script_${Date.now()}.py`;
-    
-    const pythonScript = `
-import sys
-from faster_whisper import WhisperModel
+    const pythonScript = [
+      'import sys',
+      'from faster_whisper import WhisperModel',
+      '',
+      '# 初始化模型',
+      `model = WhisperModel("${whisperOptions.model}")`,
+      '',
+      '# 轉錄音檔',
+      'segments, info = model.transcribe(',
+      `    "${audioPath}",`,
+      `    language="${whisperOptions.language}",`,
+      `    initial_prompt="${whisperOptions.initial_prompt}",`,
+      `    word_timestamps=${whisperOptions.word_timestamps},`,
+      `    vad_filter=${whisperOptions.vad_filter}`,
+      ')',
+      '',
+      '# 輸出結果',
+      'result = "".join([segment.text for segment in segments])',
+      'print(result)'
+    ].join('\n');
 
-# 初始化模型
-model = WhisperModel("${whisperOptions.model}")
+    // 寫入腳本文件
+    require('fs').writeFileSync(tempScriptPath, pythonScript, 'utf8');
+    logger.info(`Python 轉錄腳本已創建: ${tempScriptPath}`);
 
-# 轉錄音檔
-segments, info = model.transcribe(
-    "${audioPath}",
-    language="${whisperOptions.language}",
-    initial_prompt="${whisperOptions.initial_prompt}",
-    word_timestamps=${whisperOptions.word_timestamps},
-    vad_filter=${whisperOptions.vad_filter}
-)
-
-# 輸出結果
-result = "".join([segment.text for segment in segments])
-print(result)
-`;
-    
-    writeFileSync(tempScriptPath, pythonScript);
-    const command = `${pythonPath} ${tempScriptPath}`;
-
+    // 步驟 3: 執行轉錄
     if (progressCallback) {
-      progressCallback(40, "執行轉錄");
+      progressCallback(40, "執行 faster-whisper 轉錄");
     }
 
-    logger.info(`執行 Python 腳本: ${tempScriptPath}`);
-    
+    const command = `${pythonPath} "${tempScriptPath}"`;
+    logger.info(`執行轉錄命令: ${command}`);
+
     const { stdout, stderr } = await execAsync(command, {
       timeout: 300000, // 5分鐘超時
-      maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+      maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+      encoding: 'utf8'
     });
 
+    // 處理 stderr 輸出（警告信息）
     if (stderr && !stderr.includes('WARNING') && !stderr.includes('UserWarning')) {
-      logger.warn(`Whisper 警告: ${stderr}`);
+      logger.warn(`Whisper 警告訊息: ${stderr}`);
     }
 
-    const transcript = stdout.trim();
-    
-    // 清理臨時腳本文件
-    try {
-      require('fs').unlinkSync(tempScriptPath);
-    } catch (cleanupError) {
-      logger.warn(`清理臨時腳本失敗: ${cleanupError.message}`);
-    }
-
+    // 步驟 4: 處理轉錄結果
     if (progressCallback) {
-      progressCallback(80, "分析轉錄品質");
+      progressCallback(70, "處理轉錄結果");
+    }
+
+    const transcript = stdout ? stdout.trim() : '';
+    
+    if (!transcript) {
+      throw new Error('轉錄結果為空，可能是音檔無法識別或模型加載失敗');
+    }
+
+    // 步驟 5: 評估轉錄品質
+    if (progressCallback) {
+      progressCallback(90, "評估轉錄品質");
     }
 
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;
-
-    // 計算轉錄品質指標
     const quality = assessTranscriptionQuality(transcript);
 
     if (progressCallback) {
       progressCallback(100, "轉錄完成");
     }
 
+    // 記錄成功信息
     logger.info(`🎯 轉錄進度: 100% - 轉錄完成`);
     logger.info(`✅ 轉錄成功完成:`);
     logger.info(`- 處理時間: ${processingTime.toFixed(2)} 秒`);
@@ -459,18 +471,33 @@ print(result)
       quality,
       audioInfo,
     };
+
   } catch (error) {
-    // 清理臨時腳本文件（如果存在）
-    try {
-      if (typeof tempScriptPath !== 'undefined' && require('fs').existsSync(tempScriptPath)) {
-        require('fs').unlinkSync(tempScriptPath);
-      }
-    } catch (cleanupError) {
-      // 忽略清理錯誤
+    logger.error(`❌ faster-whisper 轉錄失敗: ${error.message}`);
+    
+    // 根據錯誤類型提供更詳細的錯誤信息
+    if (error.message.includes('timeout')) {
+      logger.error('轉錄超時，可能是音檔太長或系統資源不足');
+    } else if (error.message.includes('ENOENT')) {
+      logger.error('Python 或 faster-whisper 環境配置問題');
+    } else if (error.message.includes('ModuleNotFoundError')) {
+      logger.error('faster-whisper 模組未正確安裝');
     }
     
-    logger.error(`❌ faster-whisper 轉錄失敗: ${error.message}`);
     throw error;
+
+  } finally {
+    // 清理臨時腳本文件
+    if (tempScriptPath) {
+      try {
+        if (require('fs').existsSync(tempScriptPath)) {
+          require('fs').unlinkSync(tempScriptPath);
+          logger.info(`清理臨時腳本文件: ${tempScriptPath}`);
+        }
+      } catch (cleanupError) {
+        logger.warn(`清理臨時腳本失敗: ${cleanupError.message}`);
+      }
+    }
   }
 }
 
