@@ -157,8 +157,8 @@ testRedisConnection()
       redis: redisConfig,
       // 配置佇列設定以處理長時間執行的任務
       settings: {
-        stalledInterval: 120 * 1000,    // 2分鐘檢查一次是否卡住
-        maxStalledCount: 5,             // 允許最多5次標記為卡住
+        stalledInterval: 300 * 1000,    // 5分鐘檢查一次是否卡住 (長音檔需要更長間隔)
+        maxStalledCount: 10,            // 允許最多10次標記為卡住
         retryProcessDelay: 10 * 1000,   // 重試延遲10秒
       },
       defaultJobOptions: {
@@ -206,9 +206,28 @@ testRedisConnection()
     logger.error(`Redis 連接測試失敗: ${error.message}`);
   });
 
-// 任務處理函數（帶重試機制）
+// 任務處理函數（帶重試機制和進度更新）
 async function processTranscriptionJob(job) {
   const { fileId, fileName, caseId, forceOpenAI, batchIndex, totalBatchSize } = job.data;
+  
+  // 進度更新輔助函數
+  const updateProgress = async (percentage, message) => {
+    try {
+      await job.progress(percentage);
+      logger.info(`📊 [${caseId}] 進度 ${percentage}% - ${message}`);
+      
+      // 每10%更新一次 Google Sheets 進度狀態
+      if (percentage % 10 === 0 || percentage >= 90) {
+        const progressMessage = `轉錄進行中 (${percentage}%) - ${message}`;
+        await updateGoogleSheet(caseId, progressMessage, '轉錄中', { 
+          progress: percentage,
+          currentStep: message 
+        });
+      }
+    } catch (progressError) {
+      logger.warn(`進度更新失敗: ${progressError.message}`);
+    }
+  };
   const maxRetries = 2; // 最多重試2次（總共3次嘗試）
   let lastError = null;
   let tempDir = null; // 記錄臨時目錄，用於清理
@@ -224,12 +243,15 @@ async function processTranscriptionJob(job) {
       }
     logger.info(`📋 任務資訊: 檔案 ${fileName}, 強制 OpenAI: ${forceOpenAI ? '是' : '否'}`);
     
+    // 0. 初始化進度
+    await updateProgress(0, '任務開始');
+    
     // 1. 從 Google Drive 下載音檔
-    logger.info(`📥 步驟 1/5: 正在從 Google Drive 下載音檔...`);
+    await updateProgress(5, '從 Google Drive 下載音檔');
     const localFilePath = await downloadFromGoogleDrive(fileId, fileName);
     
     // 2. 分析音檔資訊
-    logger.info(`📊 步驟 2/5: 正在分析音檔資訊...`);
+    await updateProgress(10, '分析音檔資訊');
     const audioInfo = await getAudioInfo(localFilePath);
     const isFromiPhone = audioInfo.isFromiPhone;
     
@@ -240,24 +262,30 @@ async function processTranscriptionJob(job) {
     logger.info(`- iPhone 錄音: ${isFromiPhone ? '是' : '否'}`);
     
     // 3. 預處理音檔（壓縮和優化音質）
-    logger.info(`🔧 步驟 3/5: 正在預處理音檔...`);
+    await updateProgress(15, '預處理音檔 (壓縮和優化音質)');
     const tmp = require('tmp');
     tempDir = tmp.dirSync({ unsafeCleanup: false }); // 不自動清理，供後續使用
     const processedPath = require('path').join(tempDir.name, 'processed.mp3');
     
     await preprocessiPhoneAudio(localFilePath, processedPath, audioInfo);
     
-    // 4. 使用 faster-whisper 進行轉錄
-    logger.info(`🤖 步驟 4/5: 使用 faster-whisper 轉錄...`);
+    // 4. 使用 faster-whisper 進行轉錄 (這是最耗時的步驟)
+    await updateProgress(20, `開始 faster-whisper 轉錄 (預計需要 ${Math.ceil(audioInfo.duration/60)} 分鐘)`);
     logger.info('🔧 使用預處理後的音檔進行 faster-whisper 轉錄');
     
-    const result = await transcribeAudio(processedPath);
+    // 建立轉錄進度回調函數
+    const transcriptionProgress = (progressPercent, statusMessage) => {
+      const overallProgress = 20 + Math.floor(progressPercent * 0.65); // 20% + 65% 的轉錄進度
+      updateProgress(overallProgress, `轉錄進行中: ${statusMessage}`);
+    };
+    
+    const result = await transcribeAudio(processedPath, transcriptionProgress);
     const transcript = result.transcript;
     const quality = result.quality;
     const processingMethod = 'faster-whisper-local';
     
     // 5. 記錄品質監控
-    logger.info(`📊 步驟 5/5: 記錄品質監控...`);
+    await updateProgress(90, '記錄品質監控');
     qualityMonitor.recordTranscription({
       success: true,
       caseId: caseId,
@@ -266,13 +294,14 @@ async function processTranscriptionJob(job) {
     });
     
     // 6. 更新 Google Sheets
-    logger.info(`📝 最終步驟: 更新 Google Sheets...`);
+    await updateProgress(95, '更新 Google Sheets');
     await updateGoogleSheet(caseId, transcript, 'Completed', {
       processingMethod: processingMethod,
       qualityScore: quality.score,
       confidence: quality.confidence
     });
     
+    await updateProgress(100, '轉錄任務完成');
     logger.info(`🎉 轉錄任務完成 - Case ID: ${caseId}`);
     logger.info(`📈 最終結果: 方法=${processingMethod}, 品質=${quality.score}/100, 文字長度=${transcript.length}字元`);
     
@@ -472,7 +501,7 @@ app.post('/transcribe', async (req, res) => {
         delay: 3000           // 增加重試延遲到3秒
       },
       delay: 1000,            // 初始延遲1秒
-      timeout: 15 * 60 * 1000, // 任務超時時間：15分鐘
+      timeout: 50 * 60 * 1000, // 任務超時時間：50分鐘 (60分鐘音檔需要)
       jobId: `transcribe_${caseId}_${Date.now()}` // 唯一任務ID
     });
     
@@ -551,7 +580,7 @@ app.post('/transcribe/batch', async (req, res) => {
             delay: 5000           // 批量任務重試延遲更長
           },
           delay: delayMs,
-          timeout: 20 * 60 * 1000, // 批量任務超時時間更長：20分鐘
+          timeout: 60 * 60 * 1000, // 批量任務超時時間更長：60分鐘
           priority: 5 - Math.min(4, Math.floor(i / 5)), // 前面的任務優先級稍高
           jobId: `batch_${file.caseId}_${i}_${Date.now()}` // 唯一批量任務ID
         });
