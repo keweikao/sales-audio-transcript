@@ -414,24 +414,23 @@ print(result)
 
     logger.info(`執行 Python 腳本: ${tempScriptPath}`);
     
+    const { stdout, stderr } = await execAsync(command, {
+      timeout: 300000, // 5分鐘超時
+      maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+    });
+
+    if (stderr && !stderr.includes('WARNING') && !stderr.includes('UserWarning')) {
+      logger.warn(`Whisper 警告: ${stderr}`);
+    }
+
+    const transcript = stdout.trim();
+    
+    // 清理臨時腳本文件
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        timeout: 300000, // 5分鐘超時
-        maxBuffer: 1024 * 1024 * 10 // 10MB buffer
-      });
-
-      if (stderr && !stderr.includes('WARNING') && !stderr.includes('UserWarning')) {
-        logger.warn(`Whisper 警告: ${stderr}`);
-      }
-
-      const transcript = stdout.trim();
-      
-      // 清理臨時腳本文件
-      try {
-        require('fs').unlinkSync(tempScriptPath);
-      } catch (cleanupError) {
-        logger.warn(`清理臨時腳本失敗: ${cleanupError.message}`);
-      }
+      require('fs').unlinkSync(tempScriptPath);
+    } catch (cleanupError) {
+      logger.warn(`清理臨時腳本失敗: ${cleanupError.message}`);
+    }
 
     if (progressCallback) {
       progressCallback(80, "分析轉錄品質");
@@ -461,9 +460,11 @@ print(result)
       audioInfo,
     };
   } catch (error) {
-    // 清理臨時腳本文件
+    // 清理臨時腳本文件（如果存在）
     try {
-      require('fs').unlinkSync(tempScriptPath);
+      if (typeof tempScriptPath !== 'undefined' && require('fs').existsSync(tempScriptPath)) {
+        require('fs').unlinkSync(tempScriptPath);
+      }
     } catch (cleanupError) {
       // 忽略清理錯誤
     }
