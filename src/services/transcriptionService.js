@@ -435,18 +435,34 @@ async function transcribeWithFasterWhisper(
       '',
       '    # 輸出結果',
       '    result = "".join([segment.text for segment in segments])',
-      '    print(result)  # 輸出轉錄結果到 stdout',
+      '    print(f"🔍 轉錄結果長度: {len(result)} 字元", file=sys.stderr)',
+      '    ',
+      '    # 確保結果不為空',
+      '    if not result or len(result.strip()) == 0:',
+      '        print("⚠️ 轉錄結果為空", file=sys.stderr)',
+      '        result = "[轉錄結果為空]"',
+      '    ',
+      '    # 輸出到 stdout (這是 Node.js 讀取的部分)',
+      '    sys.stdout.write(result)',
+      '    sys.stdout.flush()  # 確保輸出被寫入',
+      '    print("\\n✅ 結果已輸出到 stdout", file=sys.stderr)',
       '',
       '    # 清理記憶體',
-      '    del model',
-      '    gc.collect()',
-      '    print("✅ 記憶體清理完成", file=sys.stderr)',
+      '    try:',
+      '        del model',
+      '        gc.collect()',
+      '        print("✅ 記憶體清理完成", file=sys.stderr)',
+      '    except Exception as cleanup_error:',
+      '        print(f"⚠️ 記憶體清理失敗: {cleanup_error}", file=sys.stderr)',
+      '    ',
+      '    print("🎉 Python 腳本執行完成", file=sys.stderr)',
+      '    sys.exit(0)  # 明確成功退出',
       '',
       'except Exception as e:',
       '    print(f"❌ Python 腳本執行失敗: {str(e)}", file=sys.stderr)',
       '    print(f"❌ 錯誤類型: {type(e).__name__}", file=sys.stderr)',
       '    traceback.print_exc(file=sys.stderr)',
-      '    sys.exit(1)'
+      '    sys.exit(1)  # 明確失敗退出'
     ].join('\n');
 
     // 寫入腳本文件
@@ -496,7 +512,9 @@ async function transcribeWithFasterWhisper(
 
     const transcript = stdout ? stdout.trim() : '';
     
-    if (!transcript) {
+    logger.info(`Node.js 收到的 stdout: "${transcript}" (長度: ${transcript.length})`);
+    
+    if (!transcript || transcript === '[轉錄結果為空]') {
       throw new Error('轉錄結果為空，可能是音檔無法識別或模型加載失敗');
     }
 
