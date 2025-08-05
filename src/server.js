@@ -216,8 +216,8 @@ async function processTranscriptionJob(job) {
       await job.progress(percentage);
       logger.info(`📊 [${caseId}] 進度 ${percentage}% - ${message}`);
       
-      // 每10%更新一次 Google Sheets 進度狀態
-      if (percentage % 10 === 0 || percentage >= 90) {
+      // 只在特定進度點更新 Google Sheets，避免覆蓋最終結果
+      if (percentage === 10 || percentage === 50) {
         const progressMessage = `轉錄進行中 (${percentage}%) - ${message}`;
         await updateGoogleSheet(caseId, progressMessage, '轉錄中', { 
           progress: percentage,
@@ -331,6 +331,18 @@ async function processTranscriptionJob(job) {
     } catch (error) {
       lastError = error;
       logger.error(`轉錄失敗 (第${attempt}次嘗試) - Case ID: ${caseId}, Error: ${error.message}`);
+      
+      // 立即更新 Google Sheets 顯示當前錯誤狀態
+      try {
+        const errorMessage = `轉錄失敗 (第${attempt}次嘗試): ${error.message}`;
+        await updateGoogleSheet(caseId, errorMessage, '轉錄中', {
+          error: error.message,
+          attempt: attempt,
+          timestamp: new Date().toISOString()
+        });
+      } catch (updateError) {
+        logger.error(`更新錯誤狀態到 Google Sheets 失敗: ${updateError.message}`);
+      }
       
       // 如果還有重試次數，繼續嘗試
       if (attempt < maxRetries + 1) {
