@@ -163,8 +163,8 @@ testRedisConnection()
       },
       defaultJobOptions: {
         jobId: undefined,
-        removeOnComplete: 50,   // 保留最近50個完成的任務
-        removeOnFail: 20,       // 保留最近20個失敗的任務
+        removeOnComplete: 10,   // 只保留最近10個完成的任務
+        removeOnFail: 5,        // 只保留最近5個失敗的任務
         attempts: 2,            // 預設重試2次
         backoff: {
           type: 'exponential',
@@ -746,6 +746,40 @@ app.get('/test-sheets', async (req, res) => {
         spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || 'not set'
       }
     });
+  }
+});
+
+// 清理失敗任務的緊急端點
+app.post('/emergency-cleanup', async (req, res) => {
+  try {
+    if (!audioQueue) {
+      return res.status(503).json({ error: 'Queue not initialized' });
+    }
+
+    // 清理所有失敗和卡住的任務
+    await audioQueue.clean(0, 'failed');
+    await audioQueue.clean(0, 'stalled'); 
+    await audioQueue.clean(0, 'active');
+    await audioQueue.clean(0, 'waiting');
+
+    const stats = {
+      waiting: await audioQueue.waiting(),
+      active: await audioQueue.active(),
+      completed: await audioQueue.completed(),
+      failed: await audioQueue.failed()
+    };
+
+    logger.info('🧹 緊急清理完成', stats);
+
+    res.json({
+      success: true,
+      message: '所有失敗和等待中的任務已清理',
+      queueStats: stats
+    });
+
+  } catch (error) {
+    logger.error(`緊急清理失敗: ${error.message}`);
+    res.status(500).json({ error: error.message });
   }
 });
 

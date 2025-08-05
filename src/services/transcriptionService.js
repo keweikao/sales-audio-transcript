@@ -38,7 +38,7 @@ const IPHONE_OPTIMIZED_CONFIG = {
   },
   // faster-whisper 參數配置
   whisperOptions: {
-    model: "asadfgglie/faster-whisper-large-v3-zh-TW", // 繁體中文優化模型
+    model: "medium", // 降級到 medium 模型以節省記憶體
     language: "zh",
     initial_prompt: "以下是一段繁體中文語音內容的轉錄：", // 強制繁體中文輸出
     word_timestamps: false,
@@ -484,9 +484,10 @@ async function transcribeWithFasterWhisper(
     logger.info(`執行轉錄命令: ${command}`);
 
     const { stdout, stderr } = await execAsync(command, {
-      timeout: 300000, // 5分鐘超時
-      maxBuffer: 1024 * 1024 * 10, // 10MB buffer
-      encoding: 'utf8'
+      timeout: 180000, // 降低到3分鐘超時，避免長時間卡住
+      maxBuffer: 1024 * 1024 * 5, // 降低到5MB buffer
+      encoding: 'utf8',
+      killSignal: 'SIGTERM' // 明確終止信號
     });
 
     // 詳細記錄 Python 執行結果

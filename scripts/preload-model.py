@@ -18,7 +18,7 @@ def preload_model():
     預載繁體中文優化的 faster-whisper 模型
     """
     try:
-        model_name = "asadfgglie/faster-whisper-large-v3-zh-TW"
+        model_name = "medium"  # 降級到 medium 模型
         logger.info(f"開始預載模型: {model_name}")
         
         # 建立模型目錄
