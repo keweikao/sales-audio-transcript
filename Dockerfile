@@ -74,6 +74,8 @@ ENV MODEL_CACHE_DIR=/app/models
 # 設定 Python 警告過濾
 ENV PYTHONWARNINGS="ignore::UserWarning"
 ENV TF_CPP_MIN_LOG_LEVEL=2
+# 明確清空 NODE_OPTIONS 避免外部干擾
+ENV NODE_OPTIONS=""
 
 # 暴露端口
 EXPOSE 3000
