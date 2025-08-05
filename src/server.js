@@ -749,6 +749,31 @@ app.get('/test-sheets', async (req, res) => {
   }
 });
 
+// 測試 Google Sheets 更新功能
+app.post('/test-sheets-update', async (req, res) => {
+  try {
+    const { caseId = 'TEST-001', transcript = '測試轉錄內容', status = 'Completed' } = req.body;
+    
+    logger.info(`🧪 測試 Google Sheets 更新 - Case ID: ${caseId}`);
+    
+    const result = await updateGoogleSheet(caseId, transcript, status);
+    
+    res.json({
+      success: result.success,
+      caseId: result.caseId,
+      rowIndex: result.rowIndex,
+      updateTime: result.updateTime
+    });
+    
+  } catch (error) {
+    logger.error(`測試 Google Sheets 更新失敗: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // 清理失敗任務的緊急端點
 app.post('/emergency-cleanup', async (req, res) => {
   try {
@@ -1093,7 +1118,8 @@ async function retryFailedCases() {
     logger.info('🔄 檢查失敗案例進行重試...');
     
     // 獲取工作表統計
-    const stats = await googleSheetsService.getSheetStats();
+    const { getSheetStats } = require('./services/googleSheetsService');
+    const stats = await getSheetStats();
     const failedCount = stats.statusCounts['轉錄失敗'] || 0;
     
     if (failedCount === 0) {

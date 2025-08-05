@@ -89,14 +89,23 @@ async function updateGoogleSheet(caseId, transcript, status = 'Completed', metad
     
     // 只有最終結果才更新轉錄文字欄位
     const isFinalResult = status === 'Completed' || status === '轉錄失敗';
+    logger.info(`更新邏輯檢查 - 狀態: "${status}", 是否為最終結果: ${isFinalResult}, 轉錄文字長度: ${transcript.length}`);
+    
     if (isFinalResult) {
-      batchUpdates.push({
+      const transcriptUpdate = {
         range: `G${rowIndex + 1}`, // G 欄：轉錄文字
         values: [[transcript]]
-      });
+      };
+      batchUpdates.push(transcriptUpdate);
+      logger.info(`添加轉錄文字更新到 G${rowIndex + 1}, 內容長度: ${transcript.length} 字元`);
     }
     
     // 批次更新，確保不覆蓋其他欄位
+    logger.info(`準備執行批次更新，共 ${batchUpdates.length} 個更新:`);
+    batchUpdates.forEach((update, index) => {
+      logger.info(`  更新 ${index + 1}: 範圍 ${update.range}, 值: ${JSON.stringify(update.values)}`);
+    });
+    
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       resource: {
@@ -104,6 +113,8 @@ async function updateGoogleSheet(caseId, transcript, status = 'Completed', metad
         data: batchUpdates
       }
     });
+    
+    logger.info(`批次更新已執行完成，更新了 ${batchUpdates.length} 個範圍`);
     
     logger.info(`Google Sheets 更新完成 - Case ID: ${caseId}, 狀態: ${status}, 轉錄長度: ${transcript.length} 字元`);
     
