@@ -18,7 +18,7 @@ def preload_model():
     預載繁體中文優化的 faster-whisper 模型
     """
     try:
-        model_name = "small"   # 緊急降級到 small 模型，最小記憶體佔用
+        model_name = "base"    # 最小模型，最快啟動
         logger.info(f"開始預載模型: {model_name}")
         
         # 建立模型目錄

@@ -21,8 +21,8 @@ logger.info("使用 faster-whisper 進行本地音頻轉錄");
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
-  // 緊急使用 small 模型最小化記憶體使用
-  modelName: "small",
+  // 使用最小 base 模型
+  modelName: "base",
   // 緊急減少分塊時長以最小化記憶體使用
   chunkDuration: 6 * 60, // 6分鐘片段，最小化記憶體使用
   // 音檔預處理參數
@@ -37,7 +37,7 @@ const IPHONE_OPTIMIZED_CONFIG = {
   },
   // faster-whisper 參數配置
   whisperOptions: {
-    model: "small", // 緊急降級到 small 模型最小化記憶體
+    model: "base", // 最小 base 模型
     language: "zh",
     initial_prompt: "以下是一段繁體中文語音內容的轉錄：", // 強制繁體中文輸出
     word_timestamps: false,

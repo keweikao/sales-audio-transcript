@@ -66,7 +66,7 @@ RUN mkdir -p /app/data /app/logs /app/models /app/scripts
 COPY scripts/preload-model.py /app/scripts/
 RUN chmod +x /app/scripts/preload-model.py
 
-# 設定環境變數
+# 設定環境變數 - 移除所有可能有問題的配置
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV PYTHONPATH=/app
@@ -74,10 +74,6 @@ ENV MODEL_CACHE_DIR=/app/models
 # 設定 Python 警告過濾
 ENV PYTHONWARNINGS="ignore::UserWarning"
 ENV TF_CPP_MIN_LOG_LEVEL=2
-# 記憶體限制和優化 (移除不被允許的 --expose-gc)
-ENV NODE_OPTIONS="--max-old-space-size=2048 --optimize-for-size"
-ENV MALLOC_TRIM_THRESHOLD_=100000
-ENV MALLOC_MMAP_THRESHOLD_=131072
 
 # 暴露端口
 EXPOSE 3000
@@ -86,19 +82,13 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
-# 創建啟動腳本
+# 創建簡化啟動腳本
 RUN echo '#!/bin/bash\n\
 set -e\n\
 export PATH="/opt/venv/bin:$PATH"\n\
-echo "🚀 啟動 faster-whisper 繁體中文轉錄服務..."\n\
-echo "🔍 檢查環境..."\n\
-node --version\n\
-npm --version\n\
-python --version\n\
-echo "🤖 預載 faster-whisper 模型..."\n\
-timeout 300 python /app/scripts/preload-model.py || echo "⚠️ 模型預載超時或失敗，繼續啟動服務"\n\
-echo "🎉 啟動 Node.js 應用..."\n\
-exec npm start' > /app/start.sh && chmod +x /app/start.sh
+echo "🚀 啟動基本轉錄服務..."\n\
+echo "🎉 直接啟動 Node.js 應用..."\n\
+exec node src/server.js' > /app/start.sh && chmod +x /app/start.sh
 
 # 啟動應用程式
 CMD ["/app/start.sh"]
