@@ -79,17 +79,22 @@ async function updateGoogleSheet(caseId, transcript, status = 'Completed', metad
       throw new Error(`找不到 Case ID: ${caseId} 的記錄`);
     }
     
-    // 只更新 F 欄 (狀態) 和 G 欄 (轉錄文字)，不覆蓋 A-E 欄的 n8n 數據
+    // 智能更新邏輯：進度更新只改狀態，最終結果才更新轉錄文字
     const batchUpdates = [
       {
         range: `F${rowIndex + 1}`, // F 欄：狀態
         values: [[status]]
-      },
-      {
-        range: `G${rowIndex + 1}`, // G 欄：轉錄文字
-        values: [[transcript]]
       }
     ];
+    
+    // 只有最終結果才更新轉錄文字欄位
+    const isFinalResult = status === 'Completed' || status === '轉錄失敗';
+    if (isFinalResult) {
+      batchUpdates.push({
+        range: `G${rowIndex + 1}`, // G 欄：轉錄文字
+        values: [[transcript]]
+      });
+    }
     
     // 批次更新，確保不覆蓋其他欄位
     await sheets.spreadsheets.values.batchUpdate({
