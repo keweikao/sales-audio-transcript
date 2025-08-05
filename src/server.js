@@ -717,6 +717,38 @@ app.get('/health', async (req, res) => {
   });
 });
 
+// Google Sheets 連線測試端點
+app.get('/test-sheets', async (req, res) => {
+  try {
+    const { checkConnection } = require('./services/googleSheetsService');
+    const result = await checkConnection();
+    
+    res.status(200).json({
+      googleSheets: result,
+      environmentVars: {
+        hasServiceAccountKey: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+        serviceAccountKeyLength: process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? 
+          process.env.GOOGLE_SERVICE_ACCOUNT_KEY.length : 0,
+        hasSpreadsheetId: !!process.env.GOOGLE_SPREADSHEET_ID,
+        spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || 'not set'
+      }
+    });
+  } catch (error) {
+    logger.error(`Google Sheets 測試失敗: ${error.message}`);
+    res.status(500).json({
+      error: error.message,
+      googleSheets: { connected: false, error: error.message },
+      environmentVars: {
+        hasServiceAccountKey: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY,
+        serviceAccountKeyLength: process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? 
+          process.env.GOOGLE_SERVICE_ACCOUNT_KEY.length : 0,
+        hasSpreadsheetId: !!process.env.GOOGLE_SPREADSHEET_ID,
+        spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || 'not set'
+      }
+    });
+  }
+});
+
 // 取得任務狀態
 app.get('/job/:jobId', async (req, res) => {
   try {
