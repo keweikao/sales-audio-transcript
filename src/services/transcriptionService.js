@@ -21,24 +21,23 @@ logger.info("使用 faster-whisper 進行本地音頻轉錄");
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
-  // 使用 base 模型以獲得更快速度
-  modelName: "base",
-  // 針對 iPhone 錄音的分塊策略
-  chunkDuration: 12 * 60, // 12分鐘片段，平衡記憶體和準確度
+  // 緊急使用 small 模型最小化記憶體使用
+  modelName: "small",
+  // 緊急減少分塊時長以最小化記憶體使用
+  chunkDuration: 6 * 60, // 6分鐘片段，最小化記憶體使用
   // 音檔預處理參數
   preprocessing: {
     bitrate: 96, // 針對 iPhone 錄音的最佳比特率
     sampleRate: 24000, // 稍高的採樣率保持細節
     channels: 1,
-    // 簡化濾波器，避免複雜濾鏡鏈問題
+    // 緊急簡化濾波器，最小化處理負擔
     filters: [
-      "highpass=f=80", // 去除低頻雜訊
-      "lowpass=f=8000", // 保留語音頻率範圍
+      "volume=0.8", // 僅調整音量，避免複雜濾波
     ],
   },
   // faster-whisper 參數配置
   whisperOptions: {
-    model: "medium", // 降級到 medium 模型以節省記憶體
+    model: "small", // 緊急降級到 small 模型最小化記憶體
     language: "zh",
     initial_prompt: "以下是一段繁體中文語音內容的轉錄：", // 強制繁體中文輸出
     word_timestamps: false,
@@ -415,8 +414,9 @@ async function transcribeWithFasterWhisper(
       `        "${whisperOptions.model}",`,
       `        device="cpu",`,
       `        compute_type="int8",  # 使用 int8 減少記憶體使用`,
-      `        cpu_threads=1,       # 降低並發線程數`,
-      `        num_workers=1        # 單一工作線程`,
+      `        cpu_threads=1,       # 單線程最小化資源`,
+      `        num_workers=1,       # 單一工作線程`,
+      `        local_files_only=False  # 允許下載但節約記憶體`,
       `    )`,
       '    print("✅ 模型載入成功", file=sys.stderr)',
       '',
@@ -447,11 +447,14 @@ async function transcribeWithFasterWhisper(
       '    sys.stdout.flush()  # 確保輸出被寫入',
       '    print("\\n✅ 結果已輸出到 stdout", file=sys.stderr)',
       '',
-      '    # 清理記憶體',
+      '    # 積極清理記憶體',
       '    try:',
       '        del model',
-      '        gc.collect()',
-      '        print("✅ 記憶體清理完成", file=sys.stderr)',
+      '        del segments', 
+      '        gc.collect()  # 第一次清理',
+      '        gc.collect()  # 第二次確保清理', 
+      '        gc.collect()  # 第三次積極清理',
+      '        print("✅ 積極記憶體清理完成", file=sys.stderr)',
       '    except Exception as cleanup_error:',
       '        print(f"⚠️ 記憶體清理失敗: {cleanup_error}", file=sys.stderr)',
       '    ',
@@ -484,8 +487,8 @@ async function transcribeWithFasterWhisper(
     logger.info(`執行轉錄命令: ${command}`);
 
     const { stdout, stderr } = await execAsync(command, {
-      timeout: 180000, // 降低到3分鐘超時，避免長時間卡住
-      maxBuffer: 1024 * 1024 * 5, // 降低到5MB buffer
+      timeout: 120000, // 緊急降低到2分鐘超時
+      maxBuffer: 1024 * 1024 * 2, // 緊急降低到2MB buffer
       encoding: 'utf8',
       killSignal: 'SIGTERM' // 明確終止信號
     });
@@ -572,6 +575,16 @@ async function transcribeWithFasterWhisper(
       } catch (cleanupError) {
         logger.warn(`清理臨時腳本失敗: ${cleanupError.message}`);
       }
+    }
+    
+    // 強制 Node.js 垃圾回收
+    try {
+      if (global.gc) {
+        global.gc();
+        logger.info('✅ Node.js 記憶體清理完成');
+      }
+    } catch (gcError) {
+      logger.warn(`Node.js 垃圾回收失敗: ${gcError.message}`);
     }
   }
 }

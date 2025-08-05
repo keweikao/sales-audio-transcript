@@ -18,7 +18,7 @@ def preload_model():
     預載繁體中文優化的 faster-whisper 模型
     """
     try:
-        model_name = "medium"  # 降級到 medium 模型
+        model_name = "small"   # 緊急降級到 small 模型，最小記憶體佔用
         logger.info(f"開始預載模型: {model_name}")
         
         # 建立模型目錄
@@ -30,7 +30,7 @@ def preload_model():
             model_name,
             device="cpu",  # Zeabur 通常使用 CPU
             compute_type="int8",  # 使用 int8 減少記憶體用量
-            cpu_threads=2,  # 限制 CPU 線程數
+            cpu_threads=1,  # 降到單線程，最小化資源使用
             download_root=model_dir
         )
         

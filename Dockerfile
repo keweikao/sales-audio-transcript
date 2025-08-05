@@ -74,6 +74,10 @@ ENV MODEL_CACHE_DIR=/app/models
 # 設定 Python 警告過濾
 ENV PYTHONWARNINGS="ignore::UserWarning"
 ENV TF_CPP_MIN_LOG_LEVEL=2
+# 記憶體限制和優化
+ENV NODE_OPTIONS="--max-old-space-size=2048 --expose-gc --optimize-for-size"
+ENV MALLOC_TRIM_THRESHOLD_=100000
+ENV MALLOC_MMAP_THRESHOLD_=131072
 
 # 暴露端口
 EXPOSE 3000

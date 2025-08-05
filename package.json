@@ -4,8 +4,8 @@
   "description": "iPhone 錄音優化的轉錄服務，部署在 Zeabur 平台",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --max-old-space-size=5120 --expose-gc src/server.js",
-    "dev": "nodemon --max-old-space-size=5120 --expose-gc src/server.js",
+    "start": "node --max-old-space-size=2048 --expose-gc --optimize-for-size src/server.js",
+    "dev": "nodemon --max-old-space-size=2048 --expose-gc --optimize-for-size src/server.js",
     "test": "jest",
     "lint": "eslint src/",
     "format": "prettier --write src/"
