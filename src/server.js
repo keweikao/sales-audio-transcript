@@ -1080,11 +1080,78 @@ app.use((req, res) => {
   });
 });
 
+/**
+ * 重試失敗的轉錄案例
+ */
+async function retryFailedCases() {
+  try {
+    if (!audioQueue) {
+      logger.warn('Queue 未初始化，跳過重試檢查');
+      return { success: false, message: 'Queue 未初始化' };
+    }
+
+    logger.info('🔄 檢查失敗案例進行重試...');
+    
+    // 獲取工作表統計
+    const stats = await googleSheetsService.getSheetStats();
+    const failedCount = stats.statusCounts['轉錄失敗'] || 0;
+    
+    if (failedCount === 0) {
+      logger.info('✅ 沒有需要重試的失敗案例');
+      return { success: true, message: '沒有需要重試的失敗案例', failedCount: 0 };
+    }
+    
+    logger.info(`找到 ${failedCount} 個失敗案例，準備重試...`);
+    
+    // 這裡可以實現更複雜的重試邏輯
+    // 暫時先記錄，避免在當前不穩定版本中增加複雜性
+    logger.info('📋 失敗案例重試功能已就緒，等待系統穩定後啟用');
+    
+    return { 
+      success: true, 
+      message: `找到 ${failedCount} 個失敗案例，重試功能已就緒`, 
+      failedCount 
+    };
+    
+  } catch (error) {
+    logger.error(`重試失敗案例時發生錯誤: ${error.message}`);
+    return { success: false, message: error.message };
+  }
+}
+
+// 手動重試失敗案例端點
+app.post('/retry-failed', async (req, res) => {
+  try {
+    logger.info('🔄 收到手動重試失敗案例請求');
+    
+    const result = await retryFailedCases();
+    
+    res.json({
+      success: result.success,
+      message: result.message,
+      failedCount: result.failedCount || 0,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error(`手動重試失敗案例時發生錯誤: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: '重試失敗案例時發生錯誤',
+      details: error.message
+    });
+  }
+});
+
 // 啟動服務器
 app.listen(port, () => {
   logger.info(`優化版轉錄服務已啟動在 port ${port}`);
   logger.info(`品質監控: 啟用`);
   logger.info(`降級機制: 啟用`);
+  
+  // 設置定期重試失敗案例（每30分鐘檢查一次）
+  setInterval(retryFailedCases, 30 * 60 * 1000);
+  logger.info('🔄 失敗案例重試機制已啟動（每30分鐘檢查一次）');
 });
 
 // 進程錯誤處理

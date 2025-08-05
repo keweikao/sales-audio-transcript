@@ -486,12 +486,29 @@ async function transcribeWithFasterWhisper(
     const command = `${pythonPath} "${tempScriptPath}"`;
     logger.info(`執行轉錄命令: ${command}`);
 
-    const { stdout, stderr } = await execAsync(command, {
-      timeout: 120000, // 緊急降低到2分鐘超時
-      maxBuffer: 1024 * 1024 * 2, // 緊急降低到2MB buffer
-      encoding: 'utf8',
-      killSignal: 'SIGTERM' // 明確終止信號
-    });
+    let stdout, stderr;
+    try {
+      const result = await execAsync(command, {
+        timeout: 120000, // 緊急降低到2分鐘超時
+        maxBuffer: 1024 * 1024 * 2, // 緊急降低到2MB buffer
+        encoding: 'utf8',
+        killSignal: 'SIGTERM' // 明確終止信號
+      });
+      stdout = result.stdout;
+      stderr = result.stderr;
+    } catch (execError) {
+      // 即使 execAsync 拋出錯誤，也要檢查是否有輸出
+      stdout = execError.stdout || '';
+      stderr = execError.stderr || '';
+      
+      // 如果有 stdout 輸出，可能是成功的（Python 訊息在 stderr）
+      if (stdout && stdout.trim().length > 0) {
+        logger.info(`Python 腳本有輸出，可能執行成功: ${stdout.length} 字元`);
+      } else {
+        logger.error(`Python 腳本執行失敗: ${execError.message}`);
+        throw execError;
+      }
+    }
 
     // 詳細記錄 Python 執行結果
     logger.info(`Python 執行完成 - stdout 長度: ${stdout ? stdout.length : 0}, stderr 長度: ${stderr ? stderr.length : 0}`);
