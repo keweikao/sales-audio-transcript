@@ -20,13 +20,12 @@ const QUALITY_THRESHOLDS = {
   FAIL: 25
 };
 
-// 建議降級到 OpenAI API 的條件
-const FALLBACK_CONDITIONS = {
-  qualityScore: 60,        // 品質分數低於60
-  confidenceScore: 0.6,    // 信心度低於0.6
-  repetitionRatio: 0.4,    // 重複內容超過40%
-  chineseRatio: 0.5,       // 中文字元少於50%
-  consecutiveFailures: 3   // 連續失敗3次
+// 品質評估閾值
+const QUALITY_EVALUATION = {
+  minScore: 60,           // 最低可接受品質分數
+  minConfidence: 0.6,     // 最低可接受信心度
+  maxRepetition: 0.4,     // 最大可接受重複比例
+  minChinese: 0.5         // 最低中文字元比例
 };
 
 class QualityMonitor {
@@ -98,67 +97,43 @@ class QualityMonitor {
   }
 
   /**
-   * 檢查是否應該降級到 OpenAI API
+   * 評估轉錄品質並提供改善建議
    */
-  shouldFallbackToOpenAI(quality) {
-    const conditions = FALLBACK_CONDITIONS;
-    const reasons = [];
+  evaluateQuality(quality) {
+    const issues = [];
     
     // 檢查品質分數
-    if (quality.score < conditions.qualityScore) {
-      reasons.push(`品質分數過低: ${quality.score} < ${conditions.qualityScore}`);
+    if (quality.score < 60) {
+      issues.push(`品質分數較低: ${quality.score}/100`);
     }
     
     // 檢查信心度
-    if (quality.confidence < conditions.confidenceScore) {
-      reasons.push(`信心度過低: ${quality.confidence.toFixed(2)} < ${conditions.confidenceScore}`);
+    if (quality.confidence < 0.6) {
+      issues.push(`信心度較低: ${quality.confidence.toFixed(2)}`);
     }
     
     // 檢查重複內容
-    if (quality.repetitionRatio > conditions.repetitionRatio) {
-      reasons.push(`重複內容過多: ${(quality.repetitionRatio * 100).toFixed(1)}% > ${conditions.repetitionRatio * 100}%`);
+    if (quality.repetitionRatio > 0.4) {
+      issues.push(`重複內容偏多: ${(quality.repetitionRatio * 100).toFixed(1)}%`);
     }
     
     // 檢查中文字元比例
-    if (quality.chineseRatio < conditions.chineseRatio) {
-      reasons.push(`中文字元過少: ${(quality.chineseRatio * 100).toFixed(1)}% < ${conditions.chineseRatio * 100}%`);
+    if (quality.chineseRatio < 0.5) {
+      issues.push(`中文字元偏少: ${(quality.chineseRatio * 100).toFixed(1)}%`);
     }
     
-    // 檢查連續失敗
-    if (this.stats.consecutiveFailures >= conditions.consecutiveFailures) {
-      reasons.push(`連續失敗次數過多: ${this.stats.consecutiveFailures} >= ${conditions.consecutiveFailures}`);
-    }
-    
-    // 檢查整體系統表現
-    if (this.stats.averageQuality < conditions.qualityScore && this.stats.qualityHistory.length >= 10) {
-      reasons.push(`系統整體品質下降: ${this.stats.averageQuality.toFixed(1)} < ${conditions.qualityScore}`);
-    }
-    
-    if (reasons.length > 0) {
-      logger.warn(`建議降級到 OpenAI API:`);
-      reasons.forEach(reason => logger.warn(`- ${reason}`));
-      
-      return {
-        shouldFallback: true,
-        reasons: reasons,
-        confidence: this.calculateFallbackConfidence(reasons.length)
-      };
+    if (issues.length > 0) {
+      logger.warn(`轉錄品質問題:`);
+      issues.forEach(issue => logger.warn(`- ${issue}`));
     }
     
     return {
-      shouldFallback: false,
-      reasons: [],
-      confidence: 0
+      hasIssues: issues.length > 0,
+      issues: issues,
+      overallQuality: quality.score >= 70 ? 'good' : quality.score >= 50 ? 'fair' : 'poor'
     };
   }
 
-  /**
-   * 計算降級建議的信心度
-   */
-  calculateFallbackConfidence(reasonCount) {
-    // 觸發條件越多，建議信心度越高
-    return Math.min(0.9, 0.3 + (reasonCount * 0.15));
-  }
 
   /**
    * 獲取品質等級

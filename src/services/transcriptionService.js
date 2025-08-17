@@ -3,6 +3,7 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const tmp = require('tmp');
 const winston = require('winston');
+const { NodeWhisper } = require('node-whisper');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -13,8 +14,8 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-// node-whisper 已移除，直接使用 OpenAI API
-logger.info('使用 OpenAI API 進行音頻轉錄');
+// 使用 Faster-Whisper 進行本地音頻轉錄
+logger.info('使用 Faster-Whisper 進行音頻轉錄');
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
@@ -33,11 +34,11 @@ const IPHONE_OPTIMIZED_CONFIG = {
       'lowpass=f=8000'    // 保留語音頻率範圍
     ]
   },
-  // OpenAI API 參數配置
-  openaiOptions: {
+  // Faster-Whisper 參數配置
+  whisperOptions: {
     language: 'zh',
-    temperature: 0.0,
-    response_format: 'text'
+    model: 'base',
+    temperature: 0.0
   }
 };
 
@@ -324,15 +325,27 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     // 獲取音檔資訊
     const audioInfo = await getAudioInfo(audioPath);
     
-    // 直接使用 OpenAI API，不使用本地 Whisper
-    logger.info('🔄 跳過本地 Whisper，直接使用 OpenAI API 轉錄');
+    // 使用 Faster-Whisper 進行本地轉錄
+    logger.info('🔄 使用 Faster-Whisper 進行本地轉錄');
     
-    // 返回空結果，但保留音檔資訊
-    return {
-      text: '', 
-      quality: { score: 0, confidence: 0.0, details: 'Using OpenAI API' },
-      audioInfo: audioInfo
-    };
+    // 初始化 Whisper 實例
+    const whisper = new NodeWhisper(audioPath, {
+      modelName: config.whisperOptions.model,
+      language: config.whisperOptions.language,
+      temperature: config.whisperOptions.temperature,
+      verbose: false
+    });
+    
+    if (progressCallback) {
+      progressCallback(50, '正在轉錄...');
+    }
+    
+    // 執行轉錄
+    const transcript = await whisper.transcribe();
+    
+    if (!transcript || transcript.trim().length === 0) {
+      throw new Error('轉錄結果為空');
+    }
     
     const endTime = Date.now();
     const processingTime = (endTime - startTime) / 1000;

@@ -6,7 +6,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const winston = require('winston');
 const Queue = require('bull');
-const OpenAI = require('openai');
 const fs = require('fs');
 const tmp = require('tmp');
 const ffmpeg = require('fluent-ffmpeg');
@@ -34,10 +33,6 @@ const port = process.env.PORT || 3000;
 // 初始化品質監控
 const qualityMonitor = new QualityMonitor();
 
-// 初始化 OpenAI 客戶端
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || 'dummy-key'
-});
 
 // 設定中介軟體
 app.use(helmet());
@@ -100,7 +95,6 @@ logger.info(`所有 Redis 相關環境變數: ${allEnvVars.join(', ')}`);
 logger.info(`Google 服務設定:`);
 logger.info(`- GOOGLE_SERVICE_ACCOUNT_KEY: ${process.env.GOOGLE_SERVICE_ACCOUNT_KEY ? '已設定' : '未設定'}`);
 logger.info(`- GOOGLE_SPREADSHEET_ID: ${process.env.GOOGLE_SPREADSHEET_ID || '未設定'}`);
-logger.info(`- OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '已設定' : '未設定'}`);
 
 logger.info(`Redis 連接配置: ${redisConfig.host}:${redisConfig.port}, 密碼: ${redisConfig.password ? '已設定' : '未設定'}`);
 
@@ -195,7 +189,7 @@ testRedisConnection()
 
 // 任務處理函數（帶重試機制）
 async function processTranscriptionJob(job) {
-  const { fileId, fileName, caseId, forceOpenAI, batchIndex, totalBatchSize } = job.data;
+  const { fileId, fileName, caseId, batchIndex, totalBatchSize } = job.data;
   const maxRetries = 2; // 最多重試2次（總共3次嘗試）
   let lastError = null;
   let tempDir = null; // 記錄臨時目錄，用於清理
@@ -209,14 +203,14 @@ async function processTranscriptionJob(job) {
       } else {
         logger.info(`🎬 ${batchInfo}開始處理轉錄任務 - Case ID: ${caseId}`);
       }
-    logger.info(`📋 任務資訊: 檔案 ${fileName}, 強制 OpenAI: ${forceOpenAI ? '是' : '否'}`);
+    logger.info(`📋 任務資訊: 檔案 ${fileName}`);
     
     // 1. 從 Google Drive 下載音檔
-    logger.info(`📥 步驟 1/5: 正在從 Google Drive 下載音檔...`);
+    logger.info(`📥 步驟 1/4: 正在從 Google Drive 下載音檔...`);
     const localFilePath = await downloadFromGoogleDrive(fileId, fileName);
     
     // 2. 分析音檔資訊
-    logger.info(`📊 步驟 2/5: 正在分析音檔資訊...`);
+    logger.info(`📊 步驟 2/4: 正在分析音檔資訊...`);
     const audioInfo = await getAudioInfo(localFilePath);
     const isFromiPhone = audioInfo.isFromiPhone;
     
@@ -226,25 +220,16 @@ async function processTranscriptionJob(job) {
     logger.info(`- 大小: ${audioInfo.sizeMB.toFixed(2)} MB`);
     logger.info(`- iPhone 錄音: ${isFromiPhone ? '是' : '否'}`);
     
-    // 3. 預處理音檔（壓縮和優化音質）
-    logger.info(`🔧 步驟 3/5: 正在預處理音檔...`);
-    const tmp = require('tmp');
-    tempDir = tmp.dirSync({ unsafeCleanup: false }); // 不自動清理，供後續使用
-    const processedPath = require('path').join(tempDir.name, 'processed.mp3');
+    // 3. 使用 Faster-Whisper 進行轉錄
+    logger.info(`🤖 步驟 3/4: 使用 Faster-Whisper 轉錄...`);
     
-    await preprocessiPhoneAudio(localFilePath, processedPath, audioInfo);
-    
-    // 4. 使用 OpenAI API 進行轉錄（會自動判斷文件大小）
-    logger.info(`🤖 步驟 4/5: 使用 OpenAI API 轉錄...`);
-    logger.info('🔧 使用預處理後的音檔進行 OpenAI API 轉錄');
-    
-    const result = await transcribeWithOpenAI(processedPath);
-    const transcript = result.transcript;
+    const result = await assessTranscriptionQuality(localFilePath, isFromiPhone);
+    const transcript = result.transcriptText;
     const quality = result.quality;
-    const processingMethod = 'openai-api-preprocessed';
+    const processingMethod = 'faster-whisper';
     
-    // 5. 記錄品質監控
-    logger.info(`📊 步驟 5/5: 記錄品質監控...`);
+    // 4. 記錄品質監控
+    logger.info(`📊 步驟 4/4: 記錄品質監控...`);
     qualityMonitor.recordTranscription({
       success: true,
       caseId: caseId,
@@ -316,127 +301,6 @@ async function processTranscriptionJob(job) {
   throw lastError;
 }
 
-// OpenAI API 轉錄函數（支援大文件自動分割）
-async function transcribeWithOpenAI(localFilePath) {
-  try {
-    logger.info(`開始使用 OpenAI API 轉錄: ${localFilePath}`);
-    
-    const startTime = Date.now();
-    
-    // 檢查檔案是否存在
-    if (!fs.existsSync(localFilePath)) {
-      throw new Error(`音檔檔案不存在: ${localFilePath}`);
-    }
-    
-    // 檢查檔案大小
-    const fileStats = fs.statSync(localFilePath);
-    const fileSizeMB = fileStats.size / (1024 * 1024);
-    const MAX_FILE_SIZE_MB = 24; // 留一些緩衝空間，避免接近25MB限制
-    
-    logger.info(`檔案大小: ${fileSizeMB.toFixed(2)}MB`);
-    
-    let transcript = '';
-    let totalProcessingTime = 0;
-    
-    if (fileSizeMB <= MAX_FILE_SIZE_MB) {
-      // 檔案大小符合限制，直接轉錄
-      logger.info('檔案大小符合限制，直接使用 OpenAI API 轉錄');
-      
-      const audioFile = fs.createReadStream(localFilePath);
-      
-      const response = await openai.audio.transcriptions.create({
-        model: 'whisper-1',
-        file: audioFile,
-        language: 'zh',
-        response_format: 'text',
-        temperature: 0.0
-      });
-      
-      transcript = response.trim();
-      totalProcessingTime = (Date.now() - startTime) / 1000;
-      
-    } else {
-      // 檔案過大，需要分割處理
-      logger.info(`檔案過大 (${fileSizeMB.toFixed(2)}MB > ${MAX_FILE_SIZE_MB}MB)，開始分割處理`);
-      
-      const { getAudioInfo } = require('./services/transcriptionService');
-      const audioInfo = await getAudioInfo(localFilePath);
-      const totalDuration = audioInfo.duration;
-      
-      // 根據檔案大小計算分割數量
-      const numChunks = Math.ceil(fileSizeMB / MAX_FILE_SIZE_MB);
-      const chunkDuration = totalDuration / numChunks;
-      
-      logger.info(`將分割為 ${numChunks} 個片段，每段約 ${(chunkDuration/60).toFixed(1)} 分鐘`);
-      
-      const transcripts = [];
-      
-      for (let i = 0; i < numChunks; i++) {
-        const startTime_chunk = i * chunkDuration;
-        const endTime_chunk = Math.min((i + 1) * chunkDuration, totalDuration);
-        
-        logger.info(`🎯 處理 OpenAI 分片 ${i + 1}/${numChunks}: ${(startTime_chunk/60).toFixed(1)}-${(endTime_chunk/60).toFixed(1)} 分鐘`);
-        
-        try {
-          // 創建音檔片段
-          const chunkPath = await createAudioChunk(localFilePath, startTime_chunk, endTime_chunk, i);
-          
-          // 轉錄片段
-          const audioFile = fs.createReadStream(chunkPath);
-          
-          const response = await openai.audio.transcriptions.create({
-            model: 'whisper-1',
-            file: audioFile,
-            language: 'zh',
-            response_format: 'text',
-            temperature: 0.0
-          });
-          
-          const chunkTranscript = response.trim();
-          transcripts.push(chunkTranscript);
-          
-          logger.info(`✅ 分片 ${i + 1} 轉錄完成: ${chunkTranscript.length} 字元`);
-          
-          // 清理臨時檔案
-          try {
-            fs.unlinkSync(chunkPath);
-          } catch (cleanupError) {
-            logger.warn(`清理臨時檔案失敗: ${cleanupError.message}`);
-          }
-          
-        } catch (chunkError) {
-          logger.error(`分片 ${i + 1} 轉錄失敗: ${chunkError.message}`);
-          transcripts.push(`[分片 ${i + 1} 轉錄失敗]`);
-        }
-      }
-      
-      // 合併所有轉錄結果
-      transcript = transcripts.join('\n\n');
-      totalProcessingTime = (Date.now() - startTime) / 1000;
-      
-      logger.info(`🎉 所有分片處理完成，共 ${numChunks} 個片段`);
-    }
-    
-    // 評估轉錄品質
-    const quality = assessTranscriptionQuality(transcript);
-    
-    logger.info(`OpenAI API 轉錄完成:`);
-    logger.info(`- 處理時間: ${totalProcessingTime.toFixed(2)} 秒`);
-    logger.info(`- 文字長度: ${transcript.length} 字元`);
-    logger.info(`- 品質評分: ${quality.score}/100`);
-    logger.info(`- 信心度: ${quality.confidence.toFixed(2)}`);
-    
-    return {
-      transcript: transcript,
-      quality: quality,
-      processingTime: totalProcessingTime
-    };
-    
-  } catch (error) {
-    logger.error(`OpenAI API 轉錄失敗: ${error.message}`);
-    throw error;
-  }
-}
 
 // 清理臨時目錄的輔助函數
 function cleanupTempDirectory(tempDir) {
@@ -474,38 +338,6 @@ function cleanupTempDirectory(tempDir) {
   }
 }
 
-// 創建音檔片段的輔助函數
-async function createAudioChunk(inputPath, startTime, endTime, chunkIndex) {
-  const ffmpeg = require('fluent-ffmpeg');
-  const tmp = require('tmp');
-  
-  const chunkPath = tmp.tmpNameSync({ postfix: `_openai_chunk_${chunkIndex}.mp3` });
-  
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .seekInput(startTime)
-      .duration(endTime - startTime)
-      .audioCodec('libmp3lame')
-      .audioBitrate(96) // 使用較低比特率確保檔案大小
-      .audioFrequency(24000)
-      .audioChannels(1)
-      .output(chunkPath)
-      .on('start', (commandLine) => {
-        logger.info(`創建音檔片段: ${commandLine}`);
-      })
-      .on('end', () => {
-        const stats = fs.statSync(chunkPath);
-        const sizeMB = stats.size / (1024 * 1024);
-        logger.info(`音檔片段創建完成: ${sizeMB.toFixed(2)}MB`);
-        resolve(chunkPath);
-      })
-      .on('error', (err) => {
-        logger.error(`創建音檔片段失敗: ${err.message}`);
-        reject(err);
-      })
-      .run();
-  });
-}
 
 // 根路由 - 服務資訊
 app.get('/', (req, res) => {
@@ -522,7 +354,7 @@ app.get('/', (req, res) => {
       jobStatus: 'GET /job/:jobId',
       batchStatus: 'POST /batch/status'
     },
-    description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 OpenAI API 提供高品質轉錄，支援大文件自動分割和批量處理'
+    description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 Faster-Whisper 提供高品質轉錄，支援音檔預處理和品質監控'
   });
 });
 
@@ -584,7 +416,7 @@ app.post('/test-download', async (req, res) => {
 
 app.post('/transcribe', async (req, res) => {
   try {
-    const { fileId, fileName, caseId, forceOpenAI } = req.body;
+    const { fileId, fileName, caseId } = req.body;
     
     if (!fileId || !caseId) {
       return res.status(400).json({
@@ -603,7 +435,6 @@ app.post('/transcribe', async (req, res) => {
       fileId,
       fileName: fileName || 'unknown_audio_file',
       caseId,
-      forceOpenAI: forceOpenAI || false
     }, {
       attempts: 3,
       backoff: {
@@ -619,7 +450,7 @@ app.post('/transcribe', async (req, res) => {
       message: '轉錄任務已提交',
       jobId: job.id,
       caseId,
-      processingMethod: 'openai-api'
+      processingMethod: 'faster-whisper'
     });
     
   } catch (error) {
@@ -634,7 +465,7 @@ app.post('/transcribe', async (req, res) => {
 // 批量轉錄端點
 app.post('/transcribe/batch', async (req, res) => {
   try {
-    const { files, forceOpenAI } = req.body;
+    const { files } = req.body;
     
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({
@@ -720,7 +551,7 @@ app.post('/transcribe/batch', async (req, res) => {
       },
       jobs: jobs,
       errors: errors.length > 0 ? errors : undefined,
-      processingMethod: 'openai-api',
+      processingMethod: 'faster-whisper',
       estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
     });
     
@@ -744,7 +575,7 @@ app.get('/quality', (req, res) => {
   }
 });
 
-// 降級建議端點
+// 品質檢查端點
 app.post('/quality/check', (req, res) => {
   try {
     const { quality } = req.body;
@@ -753,12 +584,10 @@ app.post('/quality/check', (req, res) => {
       return res.status(400).json({ error: '缺少品質資料' });
     }
     
-    const fallbackDecision = qualityMonitor.shouldFallbackToOpenAI(quality);
-    
     res.json({
-      recommendation: fallbackDecision.shouldFallback ? 'openai-api' : 'faster-whisper',
-      confidence: fallbackDecision.confidence,
-      reasons: fallbackDecision.reasons
+      recommendation: 'faster-whisper',
+      quality: quality,
+      status: 'ok'
     });
     
   } catch (error) {
@@ -988,27 +817,13 @@ app.post('/debug/test-transcription', async (req, res) => {
       });
     }
     
-    // 步驟 3: 檢查 OpenAI API
-    try {
-      const testResponse = await openai.models.list();
-      logger.info('OpenAI API 連接正常');
-    } catch (openaiError) {
-      return res.json({
-        step: 3,
-        success: false,
-        error: `OpenAI API 連接失敗: ${openaiError.message}`,
-        fileId,
-        caseId
-      });
-    }
-    
-    // 步驟 4: 檢查 Google Sheets 存取
+    // 步驟 3: 檢查 Google Sheets 存取
     const { checkConnection } = require('./services/googleSheetsService');
     const sheetsConnection = await checkConnection();
     
     if (!sheetsConnection.connected) {
       return res.json({
-        step: 4,
+        step: 3,
         success: false,
         error: `Google Sheets 連接失敗: ${sheetsConnection.error}`,
         fileId,
@@ -1026,7 +841,6 @@ app.post('/debug/test-transcription', async (req, res) => {
       checks: {
         googleDrive: '✅ 可存取',
         fileDownload: '✅ 下載成功',
-        openaiAPI: '✅ 連接正常',
         googleSheets: '✅ 連接正常'
       }
     });
@@ -1040,46 +854,6 @@ app.post('/debug/test-transcription', async (req, res) => {
   }
 });
 
-// 管理端點 - 手動觸發 OpenAI API 轉錄
-app.post('/admin/force-openai/:caseId', async (req, res) => {
-  try {
-    const { caseId } = req.params;
-    const { fileId, fileName } = req.body;
-    
-    if (!fileId) {
-      return res.status(400).json({ error: '缺少 fileId' });
-    }
-    
-    if (!audioQueue) {
-      return res.status(503).json({ error: 'Redis 連接尚未準備就緒' });
-    }
-    
-    // 強制使用 OpenAI API
-    const job = await audioQueue.add({
-      fileId,
-      fileName: fileName || 'unknown_audio_file',
-      caseId,
-      forceOpenAI: true
-    }, {
-      attempts: 1,
-      priority: 10, // 高優先權
-      backoff: {
-        type: 'fixed',
-        delay: 1000
-      }
-    });
-    
-    res.json({
-      message: '已強制使用 OpenAI API 重新轉錄',
-      jobId: job.id,
-      caseId
-    });
-    
-  } catch (error) {
-    logger.error(`強制 OpenAI API 轉錄失敗: ${error.message}`);
-    res.status(500).json({ error: '操作失敗' });
-  }
-});
 
 // 錯誤處理中介軟體
 app.use((error, req, res, next) => {
