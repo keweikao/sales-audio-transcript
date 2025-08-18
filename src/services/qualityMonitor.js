@@ -55,11 +55,11 @@ class QualityMonitor {
       this.stats.consecutiveFailures = 0;
       
       // 更新品質統計
-      const quality = result.quality;
+      const quality = result.quality || { score: 0, confidence: 0.0 };
       this.stats.qualityHistory.push({
         timestamp: new Date(),
-        score: quality.score,
-        confidence: quality.confidence,
+        score: quality.score || 0,
+        confidence: quality.confidence || 0.0,
         caseId: result.caseId
       });
       
@@ -71,7 +71,7 @@ class QualityMonitor {
       // 更新平均值
       this.updateAverages();
       
-      logger.info(`轉錄成功記錄 - Case ID: ${result.caseId}, 品質: ${quality.score}/100`);
+      logger.info(`轉錄成功記錄 - Case ID: ${result.caseId}, 品質: ${quality.score || 0}/100`);
       
     } else {
       this.stats.failedTranscriptions++;

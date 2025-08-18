@@ -535,16 +535,15 @@ async function transcribeAudio(inputPath) {
       transcript: cleanedTranscript,
       quality: totalQuality,
       audioInfo: audioInfo,
-      processedFilePath: processedPath  // 提供預處理後的檔案路徑給 OpenAI API 使用
+      processedFilePath: processedPath  // 提供預處理後的檔案路徑
     };
     
   } catch (error) {
     logger.error(`❌ 轉錄流程失敗: ${error.message}`);
     throw error;
   } finally {
-    // 注意：為了讓 OpenAI API 能使用預處理檔案，暫時不清理臨時目錄
-    // 清理會由系統自動處理或在 OpenAI API 完成後手動清理
-    logger.info(`⚠️ 保留臨時目錄供 OpenAI API 使用: ${tempDir.name}`);
+    // 注意：保留臨時目錄以供調試使用，系統會自動清理
+    logger.info(`⚠️ 保留臨時目錄: ${tempDir.name}`);
   }
 }
 

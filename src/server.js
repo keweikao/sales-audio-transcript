@@ -9,7 +9,7 @@ const Queue = require('bull');
 const fs = require('fs');
 const tmp = require('tmp');
 const ffmpeg = require('fluent-ffmpeg');
-const { assessTranscriptionQuality, getAudioInfo, preprocessiPhoneAudio } = require('./services/transcriptionService');
+const { transcribeAudio, getAudioInfo, preprocessiPhoneAudio, assessTranscriptionQuality } = require('./services/transcriptionService');
 const { downloadFromGoogleDrive } = require('./services/googleDriveService');
 const { updateGoogleSheet } = require('./services/googleSheetsService');
 const QualityMonitor = require('./services/qualityMonitor');
@@ -223,9 +223,9 @@ async function processTranscriptionJob(job) {
     // 3. 使用 Faster-Whisper 進行轉錄
     logger.info(`🤖 步驟 3/4: 使用 Faster-Whisper 轉錄...`);
     
-    const result = await assessTranscriptionQuality(localFilePath, isFromiPhone);
-    const transcript = result.transcriptText;
-    const quality = result.quality;
+    const result = await transcribeAudio(localFilePath, isFromiPhone);
+    const transcript = result.transcript;
+    const quality = result.quality || { score: 0, confidence: 0.0, repetitionRatio: 0, chineseRatio: 0 };
     const processingMethod = 'faster-whisper';
     
     // 4. 記錄品質監控
