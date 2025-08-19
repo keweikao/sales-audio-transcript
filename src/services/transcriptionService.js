@@ -333,7 +333,7 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     }
     
     // 執行轉錄
-    const transcript = await nodeWhisper(audioPath, {
+    const transcriptResult = await nodeWhisper(audioPath, {
       model: config.whisperOptions.model,
       language: config.whisperOptions.language,
       temperature: config.whisperOptions.temperature,
@@ -341,6 +341,21 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
       output_format: 'txt',
       task: 'transcribe'
     });
+    
+    // 處理不同的回傳格式
+    let transcript = '';
+    if (typeof transcriptResult === 'string') {
+      transcript = transcriptResult;
+    } else if (transcriptResult && transcriptResult.text) {
+      transcript = transcriptResult.text;
+    } else if (transcriptResult && typeof transcriptResult === 'object') {
+      transcript = JSON.stringify(transcriptResult);
+    } else {
+      transcript = String(transcriptResult || '');
+    }
+    
+    logger.info(`🔍 轉錄結果類型: ${typeof transcriptResult}`);
+    logger.info(`🔍 轉錄結果內容: ${transcript.substring(0, 100)}...`);
     
     if (!transcript || transcript.trim().length === 0) {
       throw new Error('轉錄結果為空');

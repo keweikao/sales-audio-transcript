@@ -294,8 +294,12 @@ async function processTranscriptionJob(job) {
   }
   
   // 清理臨時文件（如果存在）
-  if (tempDir) {
-    cleanupTempDirectory(tempDir);
+  if (tempDir && tempDir.name) {
+    try {
+      cleanupTempDirectory(tempDir);
+    } catch (cleanupError) {
+      logger.warn(`臨時文件清理失敗: ${cleanupError.message}`);
+    }
   }
   
   throw lastError;
@@ -323,17 +327,25 @@ function cleanupTempDirectory(tempDir) {
       }
     };
     
-    cleanupDirectory(tempDir.name);
-    tempDir.removeCallback();
-    logger.info(`🗑️ 臨時文件清理完成`);
+    if (tempDir.name) {
+      cleanupDirectory(tempDir.name);
+      logger.info(`🗑️ 目錄清理完成: ${tempDir.name}`);
+    }
+    
+    if (tempDir.removeCallback && typeof tempDir.removeCallback === 'function') {
+      tempDir.removeCallback();
+      logger.info(`🗑️ 回調清理完成`);
+    }
   } catch (cleanupError) {
     logger.warn(`⚠️ 臨時文件清理失敗: ${cleanupError.message}`);
     // 如果清理失敗，嘗試使用系統的 rm 命令
-    try {
-      require('child_process').execSync(`rm -rf "${tempDir.name}"`, { timeout: 5000 });
-      logger.info(`🗑️ 使用系統命令清理臨時文件成功`);
-    } catch (rmError) {
-      logger.warn(`⚠️ 系統命令清理也失敗: ${rmError.message}`);
+    if (tempDir && tempDir.name) {
+      try {
+        require('child_process').execSync(`rm -rf "${tempDir.name}"`, { timeout: 5000 });
+        logger.info(`🗑️ 使用系統命令清理臨時文件成功: ${tempDir.name}`);
+      } catch (rmError) {
+        logger.warn(`⚠️ 系統命令清理也失敗: ${rmError.message}`);
+      }
     }
   }
 }
