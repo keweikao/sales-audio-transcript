@@ -3,7 +3,7 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const tmp = require('tmp');
 const winston = require('winston');
-const { NodeWhisper } = require('node-whisper');
+const nodeWhisper = require('node-whisper').default;
 
 const logger = winston.createLogger({
   level: 'info',
@@ -328,20 +328,18 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     // 使用 Faster-Whisper 進行本地轉錄
     logger.info('🔄 使用 Faster-Whisper 進行本地轉錄');
     
-    // 初始化 Whisper 實例
-    const whisper = new NodeWhisper(audioPath, {
-      modelName: config.whisperOptions.model,
-      language: config.whisperOptions.language,
-      temperature: config.whisperOptions.temperature,
-      verbose: false
-    });
-    
     if (progressCallback) {
       progressCallback(50, '正在轉錄...');
     }
     
     // 執行轉錄
-    const transcript = await whisper.transcribe();
+    const transcript = await nodeWhisper(audioPath, {
+      modelName: config.whisperOptions.model,
+      language: config.whisperOptions.language,
+      temperature: config.whisperOptions.temperature,
+      verbose: false,
+      output_format: 'txt'
+    });
     
     if (!transcript || transcript.trim().length === 0) {
       throw new Error('轉錄結果為空');

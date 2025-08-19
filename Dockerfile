@@ -1,12 +1,16 @@
 # 使用輕量化 Alpine 映像以加快構建
 FROM node:18-alpine
 
-# 安裝必要套件 (移除 Whisper 相關，因為直接使用 OpenAI API)
+# 安裝必要套件包括 Whisper
 RUN apk add --no-cache \
     ffmpeg \
     python3 \
+    py3-pip \
     curl \
     && rm -rf /var/cache/apk/*
+
+# 安裝 OpenAI Whisper
+RUN pip3 install --no-cache-dir openai-whisper
 
 # 驗證 FFmpeg 安裝
 RUN ffmpeg -version
