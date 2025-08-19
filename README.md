@@ -1,6 +1,6 @@
 # Zeabur Whisper 優化轉錄服務
 
-針對 iPhone 錄音優化的音頻轉錄服務，部署在 Zeabur 平台，使用 Faster-Whisper 提供高品質本地轉錄。
+針對 iPhone 錄音優化的音頻轉錄服務，部署在 Zeabur 平台，使用 Faster-Whisper 提供高品質本地轉錄。最新版本修復了參數問題。
 
 ## 主要功能
 
