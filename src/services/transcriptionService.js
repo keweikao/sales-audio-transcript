@@ -22,7 +22,7 @@ const IPHONE_OPTIMIZED_CONFIG = {
   // 使用 base 模型以獲得更快速度
   modelName: 'base',
   // 針對 iPhone 錄音的分塊策略
-  chunkDuration: 12 * 60, // 12分鐘片段，平衡記憶體和準確度
+  chunkDuration: 8 * 60, // 8分鐘片段，減少單個片段處理時間
   // 音檔預處理參數
   preprocessing: {
     bitrate: 96, // 針對 iPhone 錄音的最佳比特率
@@ -99,11 +99,11 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
   return new Promise((resolve, reject) => {
     logger.info(`iPhone 錄音預處理開始: ${inputPath}`);
     
-    // 設定超時機制 (5分鐘)
+    // 設定超時機制 (10分鐘) - 適應長音檔
     const timeout = setTimeout(() => {
       logger.error('iPhone 錄音預處理超時');
       reject(new Error('Audio preprocessing timeout'));
-    }, 5 * 60 * 1000);
+    }, 10 * 60 * 1000);
     
     const config = IPHONE_OPTIMIZED_CONFIG.preprocessing;
     

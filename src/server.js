@@ -155,15 +155,16 @@ testRedisConnection()
       defaultJobOptions: {
         removeOnComplete: 10,
         removeOnFail: 10,
-        attempts: 3,
+        attempts: 2,  // 減少重試次數避免長時間卡住
         backoff: {
           type: 'exponential',
-          delay: 2000
-        }
+          delay: 3000
+        },
+        timeout: 45 * 60 * 1000  // 45分鐘超時，適應長音檔處理
       },
       settings: {
         stalledInterval: 60 * 1000,    // 60 秒檢查一次 stalled jobs
-        maxStalledCount: 3             // 最多允許 3 次 stalled
+        maxStalledCount: 2             // 減少到 2 次 stalled 允許
       }
     });
     
@@ -191,7 +192,7 @@ testRedisConnection()
     });
 
     // 設定 Queue 處理器 - 支持並發處理
-    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 2; // 減少到2個避免記憶體問題
+    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 1; // 單一處理避免長音檔記憶體競爭
     
     audioQueue.process(CONCURRENT_JOBS, async (job, done) => {
       try {
