@@ -893,10 +893,43 @@ app.use((req, res) => {
 });
 
 // 啟動服務器
-app.listen(port, () => {
-  logger.info(`優化版轉錄服務已啟動在 port ${port}`);
-  logger.info(`品質監控: 啟用`);
-  logger.info(`降級機制: 啟用`);
+const server = app.listen(port, '0.0.0.0', () => {
+  logger.info(`🚀 優化版轉錄服務已啟動在 port ${port}`);
+  logger.info(`📊 品質監控: 啟用`);
+  logger.info(`🔧 使用 Faster-Whisper 本地轉錄`);
+  
+  // 驗證關鍵依賴
+  try {
+    const whisperTest = require('node-whisper');
+    logger.info('✅ node-whisper 依賴正常');
+  } catch (error) {
+    logger.error('❌ node-whisper 依賴有問題:', error.message);
+  }
+});
+
+// 優雅關閉處理
+process.on('SIGTERM', () => {
+  logger.info('收到 SIGTERM 信號，開始優雅關閉...');
+  server.close((error) => {
+    if (error) {
+      logger.error('伺服器關閉時發生錯誤:', error);
+      process.exit(1);
+    }
+    logger.info('伺服器已優雅關閉');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('收到 SIGINT 信號，開始優雅關閉...');
+  server.close((error) => {
+    if (error) {
+      logger.error('伺服器關閉時發生錯誤:', error);
+      process.exit(1);
+    }
+    logger.info('伺服器已優雅關閉');
+    process.exit(0);
+  });
 });
 
 // 進程錯誤處理
