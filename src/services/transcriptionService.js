@@ -334,11 +334,12 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     
     // 執行轉錄
     const transcript = await nodeWhisper(audioPath, {
-      modelName: config.whisperOptions.model,
+      model: config.whisperOptions.model,
       language: config.whisperOptions.language,
       temperature: config.whisperOptions.temperature,
       verbose: false,
-      output_format: 'txt'
+      output_format: 'txt',
+      task: 'transcribe'
     });
     
     if (!transcript || transcript.trim().length === 0) {
