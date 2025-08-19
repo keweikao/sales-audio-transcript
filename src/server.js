@@ -151,7 +151,20 @@ testRedisConnection()
   .then(() => {
     // Redis 連接成功後初始化 Queue
     audioQueue = new Queue('audio transcription', {
-      redis: redisConfig
+      redis: redisConfig,
+      defaultJobOptions: {
+        removeOnComplete: 10,
+        removeOnFail: 10,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000
+        }
+      },
+      settings: {
+        stalledInterval: 60 * 1000,    // 60 秒檢查一次 stalled jobs
+        maxStalledCount: 3             // 最多允許 3 次 stalled
+      }
     });
     
     logger.info('✅ Bull Queue 初始化完成');
@@ -178,9 +191,25 @@ testRedisConnection()
     });
 
     // 設定 Queue 處理器 - 支持並發處理
-    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 3; // 預設同時處理3個任務
-    audioQueue.process(CONCURRENT_JOBS, async (job) => {
-      return await processTranscriptionJob(job);
+    const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 2; // 減少到2個避免記憶體問題
+    
+    audioQueue.process(CONCURRENT_JOBS, async (job, done) => {
+      try {
+        logger.info(`🎬 開始處理任務 ${job.id} - Case ID: ${job.data.caseId}`);
+        
+        // 設定任務進度
+        await job.progress(0);
+        
+        const result = await processTranscriptionJob(job);
+        
+        await job.progress(100);
+        logger.info(`✅ 任務 ${job.id} 處理完成 - Case ID: ${job.data.caseId}`);
+        
+        done(null, result);
+      } catch (error) {
+        logger.error(`❌ 任務 ${job.id} 處理失敗: ${error.message}`);
+        done(error);
+      }
     });
   })
   .catch(error => {
@@ -453,7 +482,8 @@ app.post('/transcribe', async (req, res) => {
         type: 'exponential',
         delay: 2000
       },
-      delay: 2000
+      delay: 2000,
+      timeout: 10 * 60 * 1000  // 10 分鐘超時
     });
     
     logger.info(`任務已加入佇列 - Job ID: ${job.id}, Case ID: ${caseId}`);
@@ -531,6 +561,7 @@ app.post('/transcribe/batch', async (req, res) => {
             delay: 3000
           },
           delay: delayMs,
+          timeout: 10 * 60 * 1000,  // 10 分鐘超時
           priority: 5 - Math.min(4, Math.floor(i / 5)) // 前面的任務優先級稍高
         });
         
