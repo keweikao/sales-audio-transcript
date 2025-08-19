@@ -343,7 +343,7 @@ function cleanupTempDirectory(tempDir) {
 app.get('/', (req, res) => {
   res.json({
     service: 'Zeabur Whisper 優化轉錄服務',
-    version: '1.0.0',
+    version: '1.0.1',
     status: 'running',
     timestamp: new Date().toISOString(),
     endpoints: {
