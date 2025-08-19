@@ -541,8 +541,15 @@ async function transcribeAudio(inputPath) {
     logger.error(`❌ 轉錄流程失敗: ${error.message}`);
     throw error;
   } finally {
-    // 注意：保留臨時目錄以供調試使用，系統會自動清理
-    logger.info(`⚠️ 保留臨時目錄: ${tempDir.name}`);
+    // 清理臨時目錄以節省空間
+    try {
+      if (tempDir && tempDir.removeCallback) {
+        tempDir.removeCallback();
+        logger.info(`🗑️ 已清理臨時目錄: ${tempDir.name}`);
+      }
+    } catch (cleanupError) {
+      logger.warn(`⚠️ 清理臨時目錄失敗: ${cleanupError.message}`);
+    }
   }
 }
 

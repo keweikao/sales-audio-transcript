@@ -858,10 +858,30 @@ app.post('/debug/test-transcription', async (req, res) => {
 // 錯誤處理中介軟體
 app.use((error, req, res, next) => {
   logger.error(`未處理的錯誤: ${error.message}`);
+  logger.error(`錯誤堆疊: ${error.stack}`);
+  
+  // 清理可能的記憶體
+  if (global.gc) {
+    global.gc();
+  }
+  
   res.status(500).json({
     error: '內部伺服器錯誤',
     message: process.env.NODE_ENV === 'development' ? error.message : '請聯繫管理員'
   });
+});
+
+// 處理未捕獲的異常
+process.on('uncaughtException', (error) => {
+  logger.error(`未捕獲的異常: ${error.message}`);
+  logger.error(`錯誤堆疊: ${error.stack}`);
+  process.exit(1);
+});
+
+// 處理未處理的 Promise 拒絕
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error(`未處理的 Promise 拒絕: ${reason}`);
+  logger.error(`Promise: ${promise}`);
 });
 
 // 404 處理
