@@ -1,16 +1,17 @@
-# 使用輕量化 Alpine 映像以加快構建
-FROM node:18-alpine
+# 使用 Ubuntu 基礎映像以更好支援 Python 套件
+FROM node:18-bullseye-slim
 
-# 安裝必要套件包括 Whisper
-RUN apk add --no-cache \
+# 安裝必要套件
+RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
-    py3-pip \
+    python3-pip \
     curl \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
 
 # 安裝 OpenAI Whisper
-RUN pip3 install --no-cache-dir openai-whisper
+RUN pip3 install --no-cache-dir --upgrade pip \
+    && pip3 install --no-cache-dir openai-whisper
 
 # 驗證 FFmpeg 安裝
 RUN ffmpeg -version
