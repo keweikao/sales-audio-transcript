@@ -552,7 +552,6 @@ app.post('/transcribe/batch', async (req, res) => {
           fileId: file.fileId,
           fileName: file.fileName || 'unknown_audio_file',
           caseId: file.caseId,
-          forceOpenAI: forceOpenAI || false,
           batchIndex: i,
           totalBatchSize: files.length
         }, {
@@ -944,10 +943,10 @@ const server = app.listen(port, '0.0.0.0', () => {
   
   // 驗證關鍵依賴
   try {
-    const whisperTest = require('node-whisper');
-    logger.info('✅ node-whisper 依賴正常');
+    const whisperTest = require('whisper-node');
+    logger.info('✅ whisper-node 依賴正常');
   } catch (error) {
-    logger.error('❌ node-whisper 依賴有問題:', error.message);
+    logger.error('❌ whisper-node 依賴有問題:', error.message);
   }
 });
 
@@ -955,67 +954,53 @@ const server = app.listen(port, '0.0.0.0', () => {
 process.on('SIGTERM', () => {
   logger.info('收到 SIGTERM 信號，開始優雅關閉...');
   server.close((error) => {
-    if (error) {
-      logger.error('伺服器關閉時發生錯誤:', error);
-      process.exit(1);
+    if (audioQueue) {
+      audioQueue.close().then(() => {
+        if (error) {
+          logger.error('伺服器關閉時發生錯誤:', error);
+          process.exit(1);
+        }
+        logger.info('伺服器已優雅關閉');
+        process.exit(0);
+      }).catch((queueError) => {
+        logger.error(`關閉佇列時發生錯誤: ${queueError.message}`);
+        process.exit(1);
+      });
+    } else {
+      if (error) {
+        logger.error('伺服器關閉時發生錯誤:', error);
+        process.exit(1);
+      }
+      logger.info('伺服器已優雅關閉');
+      process.exit(0);
     }
-    logger.info('伺服器已優雅關閉');
-    process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
   logger.info('收到 SIGINT 信號，開始優雅關閉...');
   server.close((error) => {
-    if (error) {
-      logger.error('伺服器關閉時發生錯誤:', error);
-      process.exit(1);
+    if (audioQueue) {
+      audioQueue.close().then(() => {
+        if (error) {
+          logger.error('伺服器關閉時發生錯誤:', error);
+          process.exit(1);
+        }
+        logger.info('伺服器已優雅關閉');
+        process.exit(0);
+      }).catch((queueError) => {
+        logger.error(`關閉佇列時發生錯誤: ${queueError.message}`);
+        process.exit(1);
+      });
+    } else {
+      if (error) {
+        logger.error('伺服器關閉時發生錯誤:', error);
+        process.exit(1);
+      }
+      logger.info('伺服器已優雅關閉');
+      process.exit(0);
     }
-    logger.info('伺服器已優雅關閉');
-    process.exit(0);
   });
-});
-
-// 進程錯誤處理
-process.on('uncaughtException', (error) => {
-  logger.error(`未捕捉的異常: ${error.message}`);
-  logger.error(error.stack);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error(`未處理的 Promise 拒絕: ${reason}`);
-  logger.error(`Promise: ${promise}`);
-  process.exit(1);
-});
-
-// 優雅關閉
-process.on('SIGTERM', () => {
-  logger.info('收到 SIGTERM，正在關閉服務器...');
-  if (audioQueue) {
-    audioQueue.close().then(() => {
-      process.exit(0);
-    }).catch((error) => {
-      logger.error(`關閉佇列時發生錯誤: ${error.message}`);
-      process.exit(1);
-    });
-  } else {
-    process.exit(0);
-  }
-});
-
-process.on('SIGINT', () => {
-  logger.info('收到 SIGINT，正在關閉服務器...');
-  if (audioQueue) {
-    audioQueue.close().then(() => {
-      process.exit(0);
-    }).catch((error) => {
-      logger.error(`關閉佇列時發生錯誤: ${error.message}`);
-      process.exit(1);
-    });
-  } else {
-    process.exit(0);
-  }
 });
 
 module.exports = app;

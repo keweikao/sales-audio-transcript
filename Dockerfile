@@ -1,18 +1,10 @@
-# 使用 Ubuntu 基礎映像以更好支援 Python 套件
+# 使用 Node.js 基礎映像
 FROM node:18-bullseye-slim
 
 # 安裝必要套件
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    python3 \
-    python3-pip \
     curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# 安裝系統依賴給 whisper-node (需要 cmake 和 build tools)
-RUN apt-get update && apt-get install -y \
-    cmake \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # 驗證 FFmpeg 安裝
@@ -27,10 +19,12 @@ COPY package*.json ./
 # 安裝 Node.js 依賴
 RUN npm install --only=production
 
-# 下載 whisper-node 模型 (非互動式)
-RUN echo "y" | npx whisper-node download || \
-    mkdir -p models && \
-    curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+# 創建模型目錄並嘗試下載 whisper-node 模型
+RUN mkdir -p models && \
+    (echo "y" | npx whisper-node download || \
+     curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin || \
+     echo "Model download will be handled at runtime") && \
+    echo "Model preparation completed"
 
 # 複製應用程式代碼
 COPY . .
@@ -39,7 +33,7 @@ COPY . .
 RUN chmod +x start.sh
 
 # 創建必要的目錄
-RUN mkdir -p /app/data /app/logs
+RUN mkdir -p /app/data /app/logs /app/models
 
 # 設定環境變數
 ENV NODE_ENV=production

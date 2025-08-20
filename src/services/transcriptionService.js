@@ -3,7 +3,7 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const tmp = require('tmp');
 const winston = require('winston');
-const whisper = require('whisper-node').default;
+const whisper = require('whisper-node');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -344,7 +344,6 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
       modelName: config.whisperOptions.model,   // whisper-node uses modelName
       whisperOptions: {
         language: config.whisperOptions.language,
-        temperature: config.whisperOptions.temperature,
         gen_file_txt: false,
         gen_file_subtitle: false,
         gen_file_vtt: false,
