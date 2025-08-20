@@ -3,7 +3,7 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const tmp = require('tmp');
 const winston = require('winston');
-const whisper = require('whisper-node');
+const { whisper } = require('whisper-node');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -379,16 +379,14 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
       finalAudioPath = audioPath.replace(/\.[^.]+$/, '.wav');
     }
     
-    // 執行轉錄 - whisper-node 需要簡化的參數
+    // 執行轉錄 - whisper-node 參數格式
     const transcriptResult = await whisper(finalAudioPath, {
-      modelName: config.whisperOptions.model,   // whisper-node uses modelName
-      whisperOptions: {
-        language: config.whisperOptions.language,
-        gen_file_txt: false,
-        gen_file_subtitle: false,
-        gen_file_vtt: false,
-        word_timestamps: false
-      }
+      modelName: config.whisperOptions.model,
+      language: config.whisperOptions.language,
+      gen_file_txt: false,
+      gen_file_subtitle: false,
+      gen_file_vtt: false,
+      word_timestamps: false
     });
     
     // 處理 whisper-node 的回傳格式 (array of segments)
