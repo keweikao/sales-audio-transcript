@@ -23,24 +23,21 @@ COPY package*.json ./
 # 安裝 Node.js 依賴
 RUN npm install --only=production
 
-# 創建模型目錄
-RUN mkdir -p models
+# 複製應用程式代碼（包括 init-whisper.js）
+COPY . .
 
 # 設定非交互模式環境變數
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CI=true
 
+# 創建必要的目錄
+RUN mkdir -p /app/data /app/logs /app/models
+
 # 運行 whisper 初始化腳本
 RUN node init-whisper.js || echo "Whisper initialization failed, will retry at runtime"
 
-# 複製應用程式代碼
-COPY . .
-
 # 設定啟動腳本權限
 RUN chmod +x start.sh
-
-# 創建必要的目錄
-RUN mkdir -p /app/data /app/logs /app/models
 
 # 設定環境變數
 ENV NODE_ENV=production
