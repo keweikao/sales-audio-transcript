@@ -1,7 +1,8 @@
 FROM node:18-alpine
 
-# Install Python, pip, ffmpeg, and necessary build tools in a single step
-RUN apk add --no-cache --virtual .build-deps g++ make cmake && \
+# Install Python, pip, ffmpeg, and all necessary build tools in a single step
+# Added pkgconfig and ffmpeg-dev to build PyAV dependency
+RUN apk add --no-cache --virtual .build-deps g++ make cmake pkgconfig ffmpeg-dev && \
     apk add --no-cache python3 py3-pip ffmpeg
 
 # Install torch and torchaudio first from the specific index URL.
@@ -29,7 +30,7 @@ ENV WHISPER_MODELS_DIR=/app/models
 RUN apk del .build-deps
 
 # Copy package files and install Node.js dependencies
-COPY package*.json ./
+COPY package*.json ./ 
 RUN npm install --only=production
 
 # Copy the rest of the application code
