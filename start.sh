@@ -17,7 +17,15 @@ echo "🔍 檢查 FFmpeg..."
 ffmpeg -version >/dev/null 2>&1 && echo "✅ FFmpeg 可用" || echo "❌ FFmpeg 不可用"
 
 echo "🔍 檢查 Node.js 依賴..."
-npm list node-whisper >/dev/null 2>&1 && echo "✅ node-whisper 可用" || echo "❌ node-whisper 不可用"
+npm list whisper-node >/dev/null 2>&1 && echo "✅ whisper-node 可用" || echo "❌ whisper-node 不可用"
+
+echo "🔍 檢查 Whisper 模型..."
+if [ ! -d "./models" ]; then
+    echo "⚠️ 模型目錄不存在，下載 base 模型..."
+    npx whisper-node download
+else
+    echo "✅ Whisper 模型已存在"
+fi
 
 echo "🚀 啟動 Node.js 應用..."
 exec node src/server.js

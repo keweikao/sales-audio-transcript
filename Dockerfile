@@ -27,6 +27,9 @@ COPY package*.json ./
 # 安裝 Node.js 依賴
 RUN npm install --only=production
 
+# 下載 whisper-node 模型
+RUN npx whisper-node download
+
 # 複製應用程式代碼
 COPY . .
 
