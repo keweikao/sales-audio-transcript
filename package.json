@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "test": "jest",
     "lint": "eslint src/",
-    "format": "prettier --write src/"
+    "format": "prettier --write src/",
+    "health-check": "node health-check.js"
   },
   "engines": {
     "node": ">=18.0.0"
