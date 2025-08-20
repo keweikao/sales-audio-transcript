@@ -147,7 +147,8 @@ app.post('/transcribe', async (req, res) => {
 
     const job = await audioQueue.add({ fileId, fileName, caseId }, {
       attempts: 2, // 加上第一次，總共嘗試2次
-      backoff: { type: 'exponential', delay: 5000 }
+      backoff: { type: 'exponential', delay: 5000 },
+      timeout: 30 * 60 * 1000 // Set job timeout to 30 minutes (30 * 60 * 1000 ms)
     });
 
     logger.info(`任務已加入佇列 - Job ID: ${job.id}, Case ID: ${caseId}`);

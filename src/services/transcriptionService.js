@@ -22,7 +22,16 @@ const logger = winston.createLogger({
 function transcribeWithFasterWhisper(audioPath) {
   return new Promise((resolve, reject) => {
     const pythonScriptPath = path.join(__dirname, 'transcribe.py');
-    const pythonProcess = spawn('python3', [pythonScriptPath, audioPath]);
+    const pythonProcess = spawn('python3', [pythonScriptPath, audioPath], {
+      timeout: 29 * 60 * 1000 // 29 minutes timeout for the Python process
+    });
+
+    // Handle process timeout
+    pythonProcess.on('timeout', () => {
+      logger.error('Python script timed out.');
+      pythonProcess.kill(); // Terminate the process
+      reject(new Error('Transcription process exceeded its time limit (29 minutes).'));
+    });
 
     let transcript = '';
     let errorMessage = '';
