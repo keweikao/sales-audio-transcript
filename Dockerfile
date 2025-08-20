@@ -7,7 +7,8 @@ RUN apk add --no-cache --virtual .build-deps g++ make cmake && \
 # Install faster-whisper and its dependencies using pip
 # Using ctranslate2 with CPU support
 # Add --break-system-packages to bypass PEP 668
-RUN pip install --no-cache-dir --break-system-packages "faster-whisper==0.10.0" "torch==2.1.2" "torchaudio==2.1.2" --extra-index-url https://download.pytorch.org/whl/cpu
+# Updated torch and torchaudio to available versions
+RUN pip install --no-cache-dir --break-system-packages "faster-whisper==0.10.0" "torch==2.6.0+cpu" "torchaudio==2.6.0+cpu" --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Set up working directory and create models directory
 WORKDIR /app
