@@ -1,4 +1,3 @@
-
 // 載入環境變數
 require('dotenv').config();
 
@@ -133,7 +132,7 @@ async function processTranscriptionJob(job) {
 app.get('/', (req, res) => {
   res.json({
     service: 'Zeabur Whisper Optimized Transcription Service',
-    version: '1.1.0',
+    version: '1.2.0', // Trivial version bump
     status: 'running',
     description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 faster-whisper 提供高品質轉錄'
   });
@@ -212,7 +211,7 @@ app.use((error, req, res, next) => {
 
 // 啟動服務器
 app.listen(port, () => {
-  logger.info(`faster-whisper 轉錄服務已啟動在 port ${port}`);
+  logger.info(`Faster-Whisper 轉錄服務 (v1.2.0) 已啟動在 port ${port}`);
 });
 
 // 優雅關閉
