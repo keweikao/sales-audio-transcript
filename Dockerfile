@@ -4,11 +4,12 @@ FROM node:18-alpine
 RUN apk add --no-cache --virtual .build-deps g++ make cmake && \
     apk add --no-cache python3 py3-pip ffmpeg
 
-# Install faster-whisper and its dependencies using pip
-# Using ctranslate2 with CPU support
-# Add --break-system-packages to bypass PEP 668
-# Updated torch and torchaudio to available versions
-RUN pip install --no-cache-dir --break-system-packages "faster-whisper==0.10.0" "torch==2.6.0+cpu" "torchaudio==2.6.0+cpu" --extra-index-url https://download.pytorch.org/whl/cpu
+# Install torch and torchaudio first from the specific index URL.
+# This is a more robust way to ensure correct versions are found without conflict.
+RUN pip install --no-cache-dir --break-system-packages "torch==2.6.0+cpu" "torchaudio" --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Install faster-whisper, which will use the already-installed torch.
+RUN pip install --no-cache-dir --break-system-packages "faster-whisper==0.10.0"
 
 # Set up working directory and create models directory
 WORKDIR /app
