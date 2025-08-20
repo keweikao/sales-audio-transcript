@@ -314,11 +314,51 @@ async function splitByTime(inputPath, chunkDuration) {
 }
 
 /**
+ * 確保 whisper 模型已初始化
+ */
+async function ensureWhisperModelInitialized() {
+  try {
+    const modelPath = path.join(__dirname, '../../models/ggml-base.bin');
+    const modelExists = fs.existsSync(modelPath) && fs.statSync(modelPath).size > 1000;
+    
+    if (!modelExists) {
+      logger.info('🔄 模型不存在，嘗試運行時初始化...');
+      
+      // 嘗試運行初始化腳本
+      try {
+        const { initializeWhisperNode } = require('../../init-whisper');
+        await initializeWhisperNode();
+      } catch (initError) {
+        logger.warn(`初始化腳本失敗: ${initError.message}`);
+        
+        // 最後的備用方案 - 直接下載
+        const { execSync } = require('child_process');
+        try {
+          execSync('curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin', {
+            cwd: path.join(__dirname, '../..'),
+            timeout: 60000
+          });
+          logger.info('✅ 備用下載成功');
+        } catch (downloadError) {
+          logger.error(`所有模型初始化方法都失敗: ${downloadError.message}`);
+          throw new Error('Unable to initialize whisper model');
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn(`模型初始化檢查失敗: ${error.message}`);
+  }
+}
+
+/**
  * 使用優化參數的 Faster-Whisper 轉錄
  */
 async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, progressCallback = null) {
   try {
     logger.info(`開始轉錄 ${isFromiPhone ? 'iPhone 錄音' : '音檔'}: ${audioPath}`);
+    
+    // 確保模型已初始化
+    await ensureWhisperModelInitialized();
     
     const startTime = Date.now();
     const config = IPHONE_OPTIMIZED_CONFIG;
@@ -327,7 +367,7 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     const audioInfo = await getAudioInfo(audioPath);
     
     // 使用 Faster-Whisper 進行本地轉錄
-    logger.info('🔄 使用 Faster-Whisper 進行本地轉錄');
+    logger.info('🔄 使用 whisper-node 進行本地轉錄');
     
     if (progressCallback) {
       progressCallback(50, '正在轉錄...');

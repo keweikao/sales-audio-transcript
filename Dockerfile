@@ -1,10 +1,14 @@
 # 使用 Node.js 基礎映像
 FROM node:18-bullseye-slim
 
-# 安裝必要套件
+# 安裝必要套件和編譯工具
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
+    build-essential \
+    make \
+    g++ \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # 驗證 FFmpeg 安裝
@@ -19,12 +23,15 @@ COPY package*.json ./
 # 安裝 Node.js 依賴
 RUN npm install --only=production
 
-# 創建模型目錄並嘗試下載 whisper-node 模型
-RUN mkdir -p models && \
-    (echo "y" | npx whisper-node download || \
-     curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin || \
-     echo "Model download will be handled at runtime") && \
-    echo "Model preparation completed"
+# 創建模型目錄
+RUN mkdir -p models
+
+# 設定非交互模式環境變數
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CI=true
+
+# 運行 whisper 初始化腳本
+RUN node init-whisper.js || echo "Whisper initialization failed, will retry at runtime"
 
 # 複製應用程式代碼
 COPY . .
