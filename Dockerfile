@@ -1,14 +1,12 @@
 # 使用 Node.js 基礎映像
 FROM node:18-bullseye-slim
 
-# 安裝必要套件和編譯工具
+# 安裝 Python、pip 和必要套件
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
-    build-essential \
-    make \
-    g++ \
     python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # 驗證 FFmpeg 安裝
@@ -30,11 +28,14 @@ COPY . .
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CI=true
 
+# 安裝 OpenAI whisper
+RUN pip3 install --no-cache-dir openai-whisper
+
 # 創建必要的目錄
 RUN mkdir -p /app/data /app/logs /app/models
 
-# 運行 whisper 初始化腳本
-RUN node init-whisper.js || echo "Whisper initialization failed, will retry at runtime"
+# 預下載 whisper 模型
+RUN python3 -c "import whisper; whisper.load_model('base')" || echo "Model will be downloaded at runtime"
 
 # 設定啟動腳本權限
 RUN chmod +x start.sh

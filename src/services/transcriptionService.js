@@ -3,7 +3,7 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const tmp = require('tmp');
 const winston = require('winston');
-const { whisper } = require('whisper-node');
+const { spawn } = require('child_process');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -14,8 +14,8 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-// 使用 Faster-Whisper 進行本地音頻轉錄
-logger.info('使用 Faster-Whisper 進行音頻轉錄');
+// 使用 OpenAI Whisper 進行音頻轉錄
+logger.info('使用 OpenAI Whisper 進行音頻轉錄');
 
 // 針對 iPhone 錄音優化的參數
 const IPHONE_OPTIMIZED_CONFIG = {
@@ -26,7 +26,7 @@ const IPHONE_OPTIMIZED_CONFIG = {
   // 音檔預處理參數
   preprocessing: {
     bitrate: 96, // 針對 iPhone 錄音的最佳比特率
-    sampleRate: 24000, // 稍高的採樣率保持細節
+    sampleRate: 16000, // Whisper 最佳採樣率
     channels: 1,
     // 簡化濾波器，避免複雜濾鏡鏈問題
     filters: [
@@ -34,11 +34,10 @@ const IPHONE_OPTIMIZED_CONFIG = {
       'lowpass=f=8000'    // 保留語音頻率範圍
     ]
   },
-  // Faster-Whisper 參數配置
+  // OpenAI Whisper 參數配置
   whisperOptions: {
     language: 'zh',
-    model: 'base',
-    temperature: 0.0
+    model: 'base'
   }
 };
 
@@ -314,185 +313,99 @@ async function splitByTime(inputPath, chunkDuration) {
 }
 
 /**
- * 確保 whisper 模型已初始化
+ * 使用 Python OpenAI Whisper 進行轉錄
  */
-async function ensureWhisperModelInitialized() {
-  try {
-    // whisper-node 會在自己的目錄中尋找模型
-    const whisperNodePath = path.join(__dirname, '../../node_modules/whisper-node');
-    const modelDirs = [
-      path.join(whisperNodePath, 'lib'),
-      path.join(whisperNodePath, 'models'),
-      path.join(__dirname, '../../models')
-    ];
+async function transcribeWithPythonWhisper(audioPath, isFromiPhone = false, progressCallback = null) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(__dirname, 'whisper_transcribe.py');
+    const config = IPHONE_OPTIMIZED_CONFIG;
     
-    let modelFound = false;
+    logger.info(`開始轉錄 ${isFromiPhone ? 'iPhone 錄音' : '音檔'}: ${audioPath}`);
     
-    // 檢查各個可能的模型位置
-    for (const dir of modelDirs) {
-      const possiblePaths = [
-        path.join(dir, 'ggml-base.bin'),
-        path.join(dir, 'base.bin'),
-        path.join(dir, 'ggml-base.en.bin')
-      ];
+    const pythonProcess = spawn('python3', [
+      scriptPath,
+      audioPath,
+      '--model', config.whisperOptions.model,
+      '--language', config.whisperOptions.language,
+      '--output-json'
+    ]);
+
+    let transcript = '';
+    let errorMessage = '';
+
+    // 捕獲標準輸出
+    pythonProcess.stdout.on('data', (data) => {
+      transcript += data.toString();
+    });
+
+    // 捕獲標準錯誤（包含進度信息）
+    pythonProcess.stderr.on('data', (data) => {
+      const stderrLine = data.toString();
+      logger.info(`[Python Whisper]: ${stderrLine.trim()}`);
       
-      for (const modelPath of possiblePaths) {
-        if (fs.existsSync(modelPath) && fs.statSync(modelPath).size > 1000) {
-          logger.info(`✅ 找到有效模型: ${modelPath}`);
-          modelFound = true;
-          break;
-        }
+      // 解析進度信息
+      if (progressCallback && stderrLine.includes('正在載入')) {
+        progressCallback(20, '載入模型...');
+      } else if (progressCallback && stderrLine.includes('開始轉錄')) {
+        progressCallback(50, '正在轉錄...');
       }
       
-      if (modelFound) break;
-    }
-    
-    if (!modelFound) {
-      logger.info('🔄 模型不存在，嘗試下載...');
-      
-      // 確保模型目錄存在
-      const modelsDir = path.join(__dirname, '../../models');
-      if (!fs.existsSync(modelsDir)) {
-        fs.mkdirSync(modelsDir, { recursive: true });
-      }
-      
-      // 嘗試多種下載方式
-      const downloadMethods = [
-        async () => {
-          // 方法 1: 使用 whisper-node 內建下載
-          logger.info('嘗試使用 whisper-node 下載...');
-          const { execSync } = require('child_process');
-          execSync('echo "base.en" | npx whisper-node download', { 
-            cwd: path.join(__dirname, '../..'),
-            timeout: 120000,
-            env: { ...process.env, CI: 'false' }
-          });
-        },
-        async () => {
-          // 方法 2: 直接下載到 models 目錄
-          logger.info('嘗試直接下載模型...');
-          const { execSync } = require('child_process');
-          execSync('curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin', {
-            cwd: path.join(__dirname, '../..'),
-            timeout: 120000
-          });
-        },
-        async () => {
-          // 方法 3: 下載到 whisper-node 目錄
-          logger.info('嘗試下載到 whisper-node 目錄...');
-          const { execSync } = require('child_process');
-          const targetDir = path.join(whisperNodePath, 'lib');
-          if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
-          }
-          execSync(`curl -L -o ${targetDir}/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin`, {
-            timeout: 120000
-          });
-        }
-      ];
-      
-      for (let i = 0; i < downloadMethods.length; i++) {
+      errorMessage += stderrLine;
+    });
+
+    // 處理程序結束
+    pythonProcess.on('close', (code) => {
+      if (code === 0) {
         try {
-          await downloadMethods[i]();
-          logger.info(`✅ 模型下載成功 (方法 ${i + 1})`);
-          return;
-        } catch (error) {
-          logger.warn(`下載方法 ${i + 1} 失敗: ${error.message}`);
-          if (i === downloadMethods.length - 1) {
-            throw new Error('所有模型下載方法都失敗');
+          const result = JSON.parse(transcript.trim());
+          
+          if (result.success) {
+            if (progressCallback) {
+              progressCallback(100, '轉錄完成');
+            }
+            
+            logger.info('✅ Python Whisper 轉錄成功');
+            logger.info(`- 文字長度: ${result.text.length} 字元`);
+            logger.info(`- 品質評分: ${result.quality.score}/100`);
+            logger.info(`- 信心度: ${result.quality.confidence}`);
+            
+            resolve({
+              text: result.text.trim(),
+              quality: result.quality,
+              processingTime: 0, // Python 腳本沒有返回處理時間
+              segments: result.segments_count
+            });
+          } else {
+            reject(new Error(result.error || '轉錄失敗'));
           }
+        } catch (parseError) {
+          logger.error('解析 Python 輸出失敗:', parseError.message);
+          logger.error('原始輸出:', transcript);
+          reject(new Error(`解析轉錄結果失敗: ${parseError.message}`));
         }
+      } else {
+        logger.error(`Python Whisper 程序退出，代碼: ${code}`);
+        reject(new Error(`轉錄失敗，退出代碼: ${code}. 錯誤: ${errorMessage}`));
       }
-    }
-  } catch (error) {
-    logger.error(`模型初始化失敗: ${error.message}`);
-    throw error;
-  }
+    });
+
+    // 處理程序錯誤
+    pythonProcess.on('error', (err) => {
+      logger.error('啟動 Python Whisper 失敗:', err.message);
+      reject(new Error(`無法啟動 Python 轉錄程序: ${err.message}`));
+    });
+  });
 }
 
 /**
- * 使用優化參數的 Faster-Whisper 轉錄
+ * 使用優化參數的 OpenAI Whisper 轉錄
  */
 async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, progressCallback = null) {
   try {
-    logger.info(`開始轉錄 ${isFromiPhone ? 'iPhone 錄音' : '音檔'}: ${audioPath}`);
-    
-    // 確保模型已初始化
-    await ensureWhisperModelInitialized();
-    
-    const startTime = Date.now();
-    const config = IPHONE_OPTIMIZED_CONFIG;
-    
-    // 獲取音檔資訊
-    const audioInfo = await getAudioInfo(audioPath);
-    
-    // 使用 Faster-Whisper 進行本地轉錄
-    logger.info('🔄 使用 whisper-node 進行本地轉錄');
-    
-    if (progressCallback) {
-      progressCallback(50, '正在轉錄...');
-    }
-    
-    // 確保音檔是 .wav 格式
-    let finalAudioPath = audioPath;
-    if (!audioPath.endsWith('.wav')) {
-      finalAudioPath = audioPath.replace(/\.[^.]+$/, '.wav');
-    }
-    
-    // 執行轉錄 - whisper-node 參數格式
-    const transcriptResult = await whisper(finalAudioPath, {
-      modelName: 'base.en',  // 使用標準模型名稱
-      language: config.whisperOptions.language,
-      gen_file_txt: false,
-      gen_file_subtitle: false,
-      gen_file_vtt: false,
-      word_timestamps: false
-    });
-    
-    // 處理 whisper-node 的回傳格式 (array of segments)
-    let transcript = '';
-    if (Array.isArray(transcriptResult)) {
-      transcript = transcriptResult.map(segment => segment.speech || segment.text || '').join(' ');
-    } else if (typeof transcriptResult === 'string') {
-      transcript = transcriptResult;
-    } else if (transcriptResult && transcriptResult.text) {
-      transcript = transcriptResult.text;
-    } else {
-      transcript = String(transcriptResult || '');
-    }
-    
-    logger.info(`🔍 轉錄結果類型: ${typeof transcriptResult}`);
-    logger.info(`🔍 轉錄結果內容: ${transcript.substring(0, 100)}...`);
-    
-    if (!transcript || transcript.trim().length === 0) {
-      throw new Error('轉錄結果為空');
-    }
-    
-    const endTime = Date.now();
-    const processingTime = (endTime - startTime) / 1000;
-    
-    // 計算轉錄品質指標
-    const quality = assessTranscriptionQuality(transcript);
-    
-    if (progressCallback) {
-      progressCallback(100, '轉錄完成');
-    }
-    
-    logger.info(`🎯 轉錄進度: 100% - 轉錄完成`);
-    logger.info(`✅ 轉錄成功完成:`);
-    logger.info(`- 處理時間: ${processingTime.toFixed(2)} 秒`);
-    logger.info(`- 文字長度: ${transcript.length} 字元`);
-    logger.info(`- 品質評分: ${quality.score}/100`);
-    logger.info(`- 信心度: ${quality.confidence.toFixed(2)}`);
-    
-    return {
-      text: transcript.trim(),
-      processingTime: processingTime,
-      quality: quality
-    };
-    
+    // 直接使用 Python OpenAI Whisper
+    return await transcribeWithPythonWhisper(audioPath, isFromiPhone, progressCallback);
   } catch (error) {
-    logger.error(`❌ Faster-Whisper 轉錄失敗: ${error.message}`);
+    logger.error(`❌ OpenAI Whisper 轉錄失敗: ${error.message}`);
     throw error;
   }
 }

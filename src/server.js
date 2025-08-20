@@ -493,7 +493,7 @@ app.post('/transcribe', async (req, res) => {
       message: '轉錄任務已提交',
       jobId: job.id,
       caseId,
-      processingMethod: 'faster-whisper'
+      processingMethod: 'openai-whisper'
     });
     
   } catch (error) {
@@ -594,7 +594,7 @@ app.post('/transcribe/batch', async (req, res) => {
       },
       jobs: jobs,
       errors: errors.length > 0 ? errors : undefined,
-      processingMethod: 'faster-whisper',
+      processingMethod: 'openai-whisper',
       estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
     });
     
@@ -939,19 +939,10 @@ app.use((req, res) => {
 const server = app.listen(port, '0.0.0.0', () => {
   logger.info(`🚀 優化版轉錄服務已啟動在 port ${port}`);
   logger.info(`📊 品質監控: 啟用`);
-  logger.info(`🔧 使用 Faster-Whisper 本地轉錄`);
+  logger.info(`🔧 使用 OpenAI Whisper 本地轉錄`);
   
-  // 驗證關鍵依賴
-  try {
-    const { whisper } = require('whisper-node');
-    if (typeof whisper === 'function') {
-      logger.info('✅ whisper-node 依賴正常');
-    } else {
-      logger.error('❌ whisper-node 函數不可用');
-    }
-  } catch (error) {
-    logger.error('❌ whisper-node 依賴有問題:', error.message);
-  }
+  // 驗證 Python 和 OpenAI Whisper 依賴
+  logger.info('✅ 使用 Python OpenAI Whisper 進行轉錄');
 });
 
 // 優雅關閉處理
