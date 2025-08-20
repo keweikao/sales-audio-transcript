@@ -20,9 +20,13 @@ echo "🔍 檢查 Node.js 依賴..."
 npm list whisper-node >/dev/null 2>&1 && echo "✅ whisper-node 可用" || echo "❌ whisper-node 不可用"
 
 echo "🔍 檢查 Whisper 模型..."
-if [ ! -d "./models" ]; then
-    echo "⚠️ 模型目錄不存在，下載 base 模型..."
-    npx whisper-node download
+if [ ! -d "./models" ] || [ ! -f "./models/ggml-base.bin" ]; then
+    echo "⚠️ 模型不存在，嘗試下載..."
+    mkdir -p models
+    echo "y" | npx whisper-node download 2>/dev/null || {
+        echo "⚠️ 使用備用下載方式..."
+        curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+    }
 else
     echo "✅ Whisper 模型已存在"
 fi

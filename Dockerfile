@@ -27,8 +27,10 @@ COPY package*.json ./
 # 安裝 Node.js 依賴
 RUN npm install --only=production
 
-# 下載 whisper-node 模型
-RUN npx whisper-node download
+# 下載 whisper-node 模型 (非互動式)
+RUN echo "y" | npx whisper-node download || \
+    mkdir -p models && \
+    curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
 
 # 複製應用程式代碼
 COPY . .
