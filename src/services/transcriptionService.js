@@ -318,35 +318,95 @@ async function splitByTime(inputPath, chunkDuration) {
  */
 async function ensureWhisperModelInitialized() {
   try {
-    const modelPath = path.join(__dirname, '../../models/ggml-base.bin');
-    const modelExists = fs.existsSync(modelPath) && fs.statSync(modelPath).size > 1000;
+    // whisper-node 會在自己的目錄中尋找模型
+    const whisperNodePath = path.join(__dirname, '../../node_modules/whisper-node');
+    const modelDirs = [
+      path.join(whisperNodePath, 'lib'),
+      path.join(whisperNodePath, 'models'),
+      path.join(__dirname, '../../models')
+    ];
     
-    if (!modelExists) {
-      logger.info('🔄 模型不存在，嘗試運行時初始化...');
+    let modelFound = false;
+    
+    // 檢查各個可能的模型位置
+    for (const dir of modelDirs) {
+      const possiblePaths = [
+        path.join(dir, 'ggml-base.bin'),
+        path.join(dir, 'base.bin'),
+        path.join(dir, 'ggml-base.en.bin')
+      ];
       
-      // 嘗試運行初始化腳本
-      try {
-        const { initializeWhisperNode } = require('../../init-whisper');
-        await initializeWhisperNode();
-      } catch (initError) {
-        logger.warn(`初始化腳本失敗: ${initError.message}`);
-        
-        // 最後的備用方案 - 直接下載
-        const { execSync } = require('child_process');
-        try {
+      for (const modelPath of possiblePaths) {
+        if (fs.existsSync(modelPath) && fs.statSync(modelPath).size > 1000) {
+          logger.info(`✅ 找到有效模型: ${modelPath}`);
+          modelFound = true;
+          break;
+        }
+      }
+      
+      if (modelFound) break;
+    }
+    
+    if (!modelFound) {
+      logger.info('🔄 模型不存在，嘗試下載...');
+      
+      // 確保模型目錄存在
+      const modelsDir = path.join(__dirname, '../../models');
+      if (!fs.existsSync(modelsDir)) {
+        fs.mkdirSync(modelsDir, { recursive: true });
+      }
+      
+      // 嘗試多種下載方式
+      const downloadMethods = [
+        async () => {
+          // 方法 1: 使用 whisper-node 內建下載
+          logger.info('嘗試使用 whisper-node 下載...');
+          const { execSync } = require('child_process');
+          execSync('echo "base.en" | npx whisper-node download', { 
+            cwd: path.join(__dirname, '../..'),
+            timeout: 120000,
+            env: { ...process.env, CI: 'false' }
+          });
+        },
+        async () => {
+          // 方法 2: 直接下載到 models 目錄
+          logger.info('嘗試直接下載模型...');
+          const { execSync } = require('child_process');
           execSync('curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin', {
             cwd: path.join(__dirname, '../..'),
-            timeout: 60000
+            timeout: 120000
           });
-          logger.info('✅ 備用下載成功');
-        } catch (downloadError) {
-          logger.error(`所有模型初始化方法都失敗: ${downloadError.message}`);
-          throw new Error('Unable to initialize whisper model');
+        },
+        async () => {
+          // 方法 3: 下載到 whisper-node 目錄
+          logger.info('嘗試下載到 whisper-node 目錄...');
+          const { execSync } = require('child_process');
+          const targetDir = path.join(whisperNodePath, 'lib');
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+          }
+          execSync(`curl -L -o ${targetDir}/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin`, {
+            timeout: 120000
+          });
+        }
+      ];
+      
+      for (let i = 0; i < downloadMethods.length; i++) {
+        try {
+          await downloadMethods[i]();
+          logger.info(`✅ 模型下載成功 (方法 ${i + 1})`);
+          return;
+        } catch (error) {
+          logger.warn(`下載方法 ${i + 1} 失敗: ${error.message}`);
+          if (i === downloadMethods.length - 1) {
+            throw new Error('所有模型下載方法都失敗');
+          }
         }
       }
     }
   } catch (error) {
-    logger.warn(`模型初始化檢查失敗: ${error.message}`);
+    logger.error(`模型初始化失敗: ${error.message}`);
+    throw error;
   }
 }
 
@@ -381,7 +441,7 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
     
     // 執行轉錄 - whisper-node 參數格式
     const transcriptResult = await whisper(finalAudioPath, {
-      modelName: config.whisperOptions.model,
+      modelName: 'base.en',  // 使用標準模型名稱
       language: config.whisperOptions.language,
       gen_file_txt: false,
       gen_file_subtitle: false,
