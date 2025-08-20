@@ -1,6 +1,6 @@
 # Zeabur Whisper 優化轉錄服務
 
-針對 iPhone 錄音優化的音頻轉錄服務，部署在 Zeabur 平台，具備智能品質監控和降級機制。
+針對 iPhone 錄音優化的音頻轉錄服務，部署在 Zeabur 平台，使用 Faster-Whisper 提供高品質本地轉錄。最新版本修復了參數問題。
 
 ## 主要功能
 
@@ -9,10 +9,10 @@
 - **專用預處理**: 針對 iPhone 錄音的音頻優化濾波器
 - **質量保證**: 特殊的品質評估和優化參數
 
-### 🔄 智能降級機制
+### 🔄 本地轉錄處理
+- **Faster-Whisper**: 使用高效能的本地 Whisper 模型
 - **品質監控**: 實時評估轉錄品質和信心度
-- **自動降級**: 品質不佳時自動使用 OpenAI API 重新轉錄
-- **成本優化**: 優先使用本地 Faster-Whisper，必要時才使用 API
+- **成本優化**: 完全本地處理，無需外部 API 費用
 
 ### 📊 完整的品質監控
 - **即時統計**: 轉錄成功率、平均品質分數
@@ -50,7 +50,7 @@ cp .env.example .env
 必要的環境變數：
 - `GOOGLE_SERVICE_ACCOUNT_KEY`: Google 服務帳戶金鑰
 - `GOOGLE_SPREADSHEET_ID`: Google Sheets 試算表 ID
-- `OPENAI_API_KEY`: OpenAI API 金鑰（用於降級機制）
+- `WHISPER_MODEL_SIZE`: Whisper 模型大小 (base/small/medium/large)
 
 ### 2. Zeabur 部署
 
@@ -82,8 +82,7 @@ Content-Type: application/json
 {
   "fileId": "google-drive-file-id",
   "fileName": "audio.m4a",
-  "caseId": "case-001",
-  "forceOpenAI": false
+  "caseId": "case-001"
 }
 ```
 
@@ -105,29 +104,29 @@ GET /health
 ## 品質評估標準
 
 ### 評分機制
-- **優秀 (90-100)**: 高品質轉錄，無需降級
-- **良好 (75-89)**: 品質良好，可接受
-- **可接受 (60-74)**: 品質普通，可能觸發降級
-- **較差 (40-59)**: 品質不佳，建議降級
-- **失敗 (0-39)**: 品質極差，必須降級
+- **優秀 (90-100)**: 高品質轉錄，效果極佳
+- **良好 (75-89)**: 品質良好，完全可用
+- **可接受 (60-74)**: 品質普通，基本可用
+- **較差 (40-59)**: 品質不佳，需要檢查
+- **失敗 (0-39)**: 品質極差，轉錄失敗
 
-### 降級條件
-- 品質分數低於 60
-- 信心度低於 0.6
-- 重複內容超過 40%
-- 中文字元少於 50%
-- 連續失敗 3 次以上
+### 品質監控指標
+- 品質分數追蹤
+- 信心度評估
+- 重複內容檢測
+- 中文字元比例分析
+- 連續失敗次數統計
 
 ## 成本估算
 
 ### 每月 200-250 個音檔 (平均 40 分鐘)
 - **主要成本**: Zeabur 服務費用 (~$20-30/月)
-- **降級成本**: OpenAI API 使用 (~$10-20/月，取決於降級頻率)
-- **總成本**: 約 $30-50/月
+- **運算資源**: CPU 和記憶體使用 (已包含在服務費用中)
+- **總成本**: 約 $20-30/月
 
 ### 與純 API 方案比較
 - 純 OpenAI API: ~$150-200/月
-- 本方案節省: ~70-80%
+- 本方案節省: ~85-90%
 
 ## 監控和維護
 
@@ -137,13 +136,13 @@ GET /health
 
 ### 管理端點
 - 重置品質統計: `POST /admin/reset-quality-stats`
-- 強制 OpenAI 轉錄: `POST /admin/force-openai/{caseId}`
+- 系統診斷: `POST /admin/diagnose`
 
 ### 監控指標
 - 轉錄成功率
 - 平均品質分數
 - 處理時間
-- 降級頻率
+- 品質趨勢分析
 - 系統健康度
 
 ## 故障排除
@@ -155,9 +154,10 @@ GET /health
 4. **Redis 連接失敗**: 檢查 Redis 服務狀態
 
 ### 效能調優
-- 調整分塊大小 (`WHISPER_CHUNK_DURATION`)
-- 優化預處理參數 (`WHISPER_PREPROCESSING_*`)
+- 調整分塊大小 (`AUDIO_CHUNK_DURATION`)
+- 優化預處理參數 (`AUDIO_PREPROCESSING_*`)
 - 調整品質閾值 (`QUALITY_THRESHOLD_*`)
+- 選擇合適的 Whisper 模型大小 (`WHISPER_MODEL_SIZE`)
 
 ## 支援
 

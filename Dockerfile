@@ -1,12 +1,19 @@
-# 使用輕量化 Alpine 映像以加快構建
-FROM node:18-alpine
+# 使用 Ubuntu 基礎映像以更好支援 Python 套件
+FROM node:18-bullseye-slim
 
-# 安裝必要套件 (移除 Whisper 相關，因為直接使用 OpenAI API)
-RUN apk add --no-cache \
+# 安裝必要套件
+RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
+    python3-pip \
     curl \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
+
+# 安裝系統依賴給 whisper-node (需要 cmake 和 build tools)
+RUN apt-get update && apt-get install -y \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # 驗證 FFmpeg 安裝
 RUN ffmpeg -version
@@ -20,8 +27,16 @@ COPY package*.json ./
 # 安裝 Node.js 依賴
 RUN npm install --only=production
 
+# 下載 whisper-node 模型 (非互動式)
+RUN echo "y" | npx whisper-node download || \
+    mkdir -p models && \
+    curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+
 # 複製應用程式代碼
 COPY . .
+
+# 設定啟動腳本權限
+RUN chmod +x start.sh
 
 # 創建必要的目錄
 RUN mkdir -p /app/data /app/logs
@@ -33,9 +48,9 @@ ENV PORT=3000
 # 暴露端口
 EXPOSE 3000
 
-# 健康檢查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# 健康檢查 (增加啟動時間)
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
 # 啟動應用程式
-CMD ["npm", "start"]
+CMD ["./start.sh"]
