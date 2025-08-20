@@ -9,10 +9,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安裝 OpenAI Whisper (使用較小的依賴)
-RUN pip3 install --no-cache-dir --upgrade pip \
-    && pip3 install --no-cache-dir openai-whisper \
-    && python3 -c "import whisper; print('Whisper 安裝成功')"
+# 安裝系統依賴給 whisper-node (需要 cmake 和 build tools)
+RUN apt-get update && apt-get install -y \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # 驗證 FFmpeg 安裝
 RUN ffmpeg -version

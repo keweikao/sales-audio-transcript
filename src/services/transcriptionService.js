@@ -3,7 +3,7 @@ const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const tmp = require('tmp');
 const winston = require('winston');
-const nodeWhisper = require('node-whisper').default;
+const whisper = require('whisper-node').default;
 
 const logger = winston.createLogger({
   level: 'info',
@@ -121,12 +121,13 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
     }
     
     const ffmpegCommand = ffmpeg(inputPath)
-      .audioCodec('libmp3lame')
+      .audioCodec('pcm_s16le')  // WAV format for whisper-node
       .audioBitrate(finalBitrate)
-      .audioFrequency(finalSampleRate)
-      .audioChannels(config.channels)
+      .audioFrequency(16000)    // whisper-node requires 16kHz
+      .audioChannels(1)         // Mono for whisper-node
       .audioFilters(config.filters)
-      .output(outputPath);
+      .format('wav')            // Force WAV output
+      .output(outputPath.replace('.mp3', '.wav'));
     
     ffmpegCommand
       .on('start', (commandLine) => {
@@ -147,10 +148,10 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
           logger.info(`- 處理後: ${processedInfo.sizeMB.toFixed(2)}MB, ${processedInfo.bitrate}bps`);
           logger.info(`- 壓縮率: ${((1 - processedInfo.sizeMB / audioInfo.sizeMB) * 100).toFixed(1)}%`);
           
-          resolve(outputPath);
+          resolve(outputPath.replace('.mp3', '.wav'));
         } catch (error) {
           logger.error(`獲取處理後音檔資訊失敗: ${error.message}`);
-          resolve(outputPath);
+          resolve(outputPath.replace('.mp3', '.wav'));
         }
       })
       .on('error', (err) => {
@@ -272,16 +273,16 @@ async function detectSilences(inputPath) {
  * 提取音檔片段
  */
 async function extractChunk(inputPath, startTime, endTime) {
-  const chunkPath = tmp.tmpNameSync({ postfix: `_chunk_${Date.now()}.mp3` });
+  const chunkPath = tmp.tmpNameSync({ postfix: `_chunk_${Date.now()}.wav` });
   
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .seekInput(startTime)
       .duration(endTime - startTime)
-      .audioCodec('libmp3lame')
-      .audioBitrate(IPHONE_OPTIMIZED_CONFIG.preprocessing.bitrate)
-      .audioFrequency(IPHONE_OPTIMIZED_CONFIG.preprocessing.sampleRate)
+      .audioCodec('pcm_s16le')
+      .audioFrequency(16000)  // whisper-node requires 16kHz
       .audioChannels(1)
+      .format('wav')
       .output(chunkPath)
       .on('end', () => resolve(chunkPath))
       .on('error', reject)
@@ -332,24 +333,33 @@ async function transcribeWithOptimizedWhisper(audioPath, isFromiPhone = false, p
       progressCallback(50, '正在轉錄...');
     }
     
-    // 執行轉錄
-    const transcriptResult = await nodeWhisper(audioPath, {
-      model: config.whisperOptions.model,
-      language: config.whisperOptions.language,
-      temperature: config.whisperOptions.temperature,
-      verbose: false,
-      output_format: 'txt',
-      task: 'transcribe'
+    // 確保音檔是 .wav 格式
+    let finalAudioPath = audioPath;
+    if (!audioPath.endsWith('.wav')) {
+      finalAudioPath = audioPath.replace(/\.[^.]+$/, '.wav');
+    }
+    
+    // 執行轉錄 - whisper-node 需要簡化的參數
+    const transcriptResult = await whisper(finalAudioPath, {
+      modelName: config.whisperOptions.model,   // whisper-node uses modelName
+      whisperOptions: {
+        language: config.whisperOptions.language,
+        temperature: config.whisperOptions.temperature,
+        gen_file_txt: false,
+        gen_file_subtitle: false,
+        gen_file_vtt: false,
+        word_timestamps: false
+      }
     });
     
-    // 處理不同的回傳格式
+    // 處理 whisper-node 的回傳格式 (array of segments)
     let transcript = '';
-    if (typeof transcriptResult === 'string') {
+    if (Array.isArray(transcriptResult)) {
+      transcript = transcriptResult.map(segment => segment.speech || segment.text || '').join(' ');
+    } else if (typeof transcriptResult === 'string') {
       transcript = transcriptResult;
     } else if (transcriptResult && transcriptResult.text) {
       transcript = transcriptResult.text;
-    } else if (transcriptResult && typeof transcriptResult === 'object') {
-      transcript = JSON.stringify(transcriptResult);
     } else {
       transcript = String(transcriptResult || '');
     }
@@ -477,7 +487,7 @@ function checkChineseRatio(text) {
  */
 async function transcribeAudio(inputPath) {
   const tempDir = tmp.dirSync({ unsafeCleanup: true });
-  const processedPath = path.join(tempDir.name, 'processed.mp3');
+  const processedPath = path.join(tempDir.name, 'processed.wav');
   
   try {
     logger.info(`🚀 開始轉錄流程: ${inputPath}`);
