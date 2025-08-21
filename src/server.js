@@ -71,10 +71,10 @@ async function processTranscriptionJob(job) {
     logger.info(`📥 步驟 1/4: 正在從 Google Drive 下載音檔...`);
     localFilePath = await downloadFromGoogleDrive(fileId, fileName);
 
-    // 2. 使用 faster-whisper 進行轉錄
-    logger.info(`🤖 步驟 2/4: 使用 faster-whisper 轉錄...`);
+    // 2. 使用 OpenAI whisper 進行轉錄
+    logger.info(`🤖 步驟 2/4: 使用 OpenAI whisper 轉錄...`);
     const { transcript, quality, audioInfo } = await transcribeAudio(localFilePath);
-    const processingMethod = 'faster-whisper';
+    const processingMethod = 'openai-whisper';
 
     // 3. 記錄品質監控
     logger.info(`📊 步驟 3/4: 記錄品質監控...`);
@@ -134,7 +134,7 @@ app.get('/', (req, res) => {
     service: 'Zeabur Whisper Optimized Transcription Service',
     version: '1.2.0', // Trivial version bump
     status: 'running',
-    description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 faster-whisper 提供高品質轉錄'
+    description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 OpenAI whisper 提供高品質轉錄'
   });
 });
 
@@ -156,7 +156,7 @@ app.post('/transcribe', async (req, res) => {
       message: '轉錄任務已提交',
       jobId: job.id,
       caseId,
-      processingMethod: 'faster-whisper' // Changed from openai-whisper
+      processingMethod: 'openai-whisper'
     });
 
   } catch (error) {
@@ -254,7 +254,7 @@ app.post('/transcribe/batch', async (req, res) => {
       },
       jobs: jobs,
       errors: errors.length > 0 ? errors : undefined,
-      processingMethod: 'faster-whisper', // Changed from openai-whisper
+      processingMethod: 'openai-whisper',
       estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
     });
     
@@ -288,7 +288,7 @@ app.post('/quality/check', (req, res) => {
     }
     
     res.json({
-      recommendation: 'faster-whisper', // Changed from openai-whisper
+      recommendation: 'openai-whisper',
       quality: quality,
       status: 'ok'
     });

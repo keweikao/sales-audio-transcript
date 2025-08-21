@@ -16,7 +16,7 @@ const logger = winston.createLogger({
 
 // Configuration for iPhone recordings and chunking (adapted from remote)
 const IPHONE_OPTIMIZED_CONFIG = {
-  // Using 'base' model for faster-whisper (can be changed to 'large-v3' if resources allow)
+  // Using 'base' model for OpenAI whisper (can be changed to 'large-v3' if resources allow)
   modelName: 'base',
   // Chunking strategy for iPhone recordings
   chunkDuration: 8 * 60, // 8 minutes per chunk, to reduce single segment processing time
@@ -30,22 +30,21 @@ const IPHONE_OPTIMIZED_CONFIG = {
       'lowpass=f=8000'
     ]
   },
-  // faster-whisper specific options (if any, not directly used here but for context)
-  fasterWhisperOptions: {
-    language: 'zh',
-    beam_size: 5
+  // OpenAI whisper specific options
+  whisperOptions: {
+    language: 'zh'
   }
 };
 
 /**
- * Calls the Python script to transcribe audio using faster-whisper.
+ * Calls the Python script to transcribe audio using OpenAI whisper.
  * @param {string} audioPath The path to the audio file.
  * @returns {Promise<string>} A promise that resolves with the transcribed text.
  */
-function transcribeWithFasterWhisper(audioPath) {
+function transcribeWithOpenAIWhisper(audioPath) {
   return new Promise((resolve, reject) => {
-    const pythonScriptPath = path.join(__dirname, 'transcribe.py');
-    const pythonProcess = spawn('python3', [pythonScriptPath, audioPath], {
+    const pythonScriptPath = path.join(__dirname, 'whisper_transcribe.py');
+    const pythonProcess = spawn('python3', [pythonScriptPath, audioPath, '--output-json'], {
       timeout: 29 * 60 * 1000 // 29 minutes timeout for the Python process
     });
 
@@ -75,7 +74,14 @@ function transcribeWithFasterWhisper(audioPath) {
     pythonProcess.on('close', (code) => {
       if (code === 0) {
         logger.info('Python script finished successfully.');
-        resolve(transcript.trim());
+        try {
+          // Try to parse as JSON first, fallback to plain text
+          const result = JSON.parse(transcript.trim());
+          resolve(result);
+        } catch (parseError) {
+          // If not JSON, treat as plain text
+          resolve(transcript.trim());
+        }
       } else {
         logger.error(`Python script exited with code ${code}`);
         reject(new Error(`Transcription failed with exit code ${code}. Error: ${errorMessage}`));
@@ -260,7 +266,8 @@ async function transcribeAudio(inputPath) {
         const processedPath = path.join(tempDir.name, `processed_chunk_${i}.mp3`);
         await preprocessiPhoneAudio(chunkPath, processedPath, audioInfo); // Preprocess each chunk
 
-        const chunkTranscript = await transcribeWithFasterWhisper(processedPath);
+        const result = await transcribeWithOpenAIWhisper(processedPath);
+        const chunkTranscript = typeof result === 'string' ? result : result.text;
         fullTranscript += chunkTranscript + ' '; // Concatenate transcripts
         logger.info(`Chunk ${i + 1} transcription received. Length: ${chunkTranscript.length}`);
       }
@@ -269,8 +276,9 @@ async function transcribeAudio(inputPath) {
       const processedPath = path.join(tempDir.name, 'processed.mp3');
       await preprocessiPhoneAudio(inputPath, processedPath, audioInfo);
 
-      // 3. Transcribe using faster-whisper python script (single file)
-      fullTranscript = await transcribeWithFasterWhisper(processedPath);
+      // 3. Transcribe using OpenAI whisper python script (single file)
+      const result = await transcribeWithOpenAIWhisper(processedPath);
+      fullTranscript = typeof result === 'string' ? result : result.text;
       logger.info(`Transcription received from Python script. Length: ${fullTranscript.length}`);
     }
 
