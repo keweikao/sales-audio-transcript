@@ -1,7 +1,13 @@
-FROM node:18-alpine
+FROM node:18-slim
 
-# Install Python, pip, ffmpeg, and all necessary build tools in a single step
-RUN apk add --no-cache python3 py3-pip ffmpeg
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    wget \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set up working directory and create models directory
 WORKDIR /app
@@ -18,8 +24,8 @@ COPY . .
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CI=true
 
-# 安裝 OpenAI whisper (指定版本避免依賴衝突)
-RUN pip3 install --no-cache-dir --break-system-packages "openai-whisper==20231117"
+# 安裝 OpenAI whisper (Ubuntu/Debian 有更好的相容性)
+RUN pip3 install --no-cache-dir openai-whisper
 
 # 預下載 whisper 模型
 RUN python3 -c "import whisper; whisper.load_model('base')" || echo "Model will be downloaded at runtime"
