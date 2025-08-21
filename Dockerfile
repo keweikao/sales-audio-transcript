@@ -24,8 +24,10 @@ COPY . .
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CI=true
 
-# 安裝 OpenAI whisper (Ubuntu/Debian 有更好的相容性)
-RUN pip3 install --no-cache-dir openai-whisper
+# 建立 Python 虛擬環境並安裝 OpenAI whisper
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir openai-whisper
 
 # 預下載 whisper 模型
 RUN python3 -c "import whisper; whisper.load_model('base')" || echo "Model will be downloaded at runtime"
