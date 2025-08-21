@@ -22,7 +22,7 @@ const IPHONE_OPTIMIZED_CONFIG = {
   chunkDuration: 8 * 60, // 8 minutes per chunk, to reduce single segment processing time
   // Audio preprocessing parameters (already in preprocessiPhoneAudio)
   preprocessing: {
-    bitrate: 96,
+    bitrate: 64,
     sampleRate: 16000,
     channels: 1,
     filters: [
@@ -146,7 +146,7 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
     
     const ffmpegCommand = ffmpeg(inputPath)
       .audioCodec('libmp3lame')
-      .audioBitrate('96k')
+      .audioBitrate('64k')
       .audioFrequency(16000)
       .audioChannels(1)
       .audioFilters('highpass=f=80', 'lowpass=f=8000')
