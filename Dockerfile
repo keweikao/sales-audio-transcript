@@ -18,8 +18,8 @@ COPY . .
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CI=true
 
-# 安裝 OpenAI whisper (使用標準版本，兼容性更好)
-RUN pip3 install --no-cache-dir --break-system-packages openai-whisper
+# 安裝 OpenAI whisper (指定版本避免依賴衝突)
+RUN pip3 install --no-cache-dir --break-system-packages "openai-whisper==20231117"
 
 # 預下載 whisper 模型
 RUN python3 -c "import whisper; whisper.load_model('base')" || echo "Model will be downloaded at runtime"
