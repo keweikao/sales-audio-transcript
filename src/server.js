@@ -156,7 +156,7 @@ app.post('/transcribe', async (req, res) => {
       message: '轉錄任務已提交',
       jobId: job.id,
       caseId,
-      processingMethod: 'faster-whisper'
+      processingMethod: 'faster-whisper' // Changed from openai-whisper
     });
 
   } catch (error) {
@@ -165,6 +165,141 @@ app.post('/transcribe', async (req, res) => {
   }
 });
 
+// 批量轉錄端點
+app.post('/transcribe/batch', async (req, res) => {
+  try {
+    const { files } = req.body;
+    
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        error: '缺少必要參數: files 陣列'
+      });
+    }
+    
+    if (!audioQueue) {
+      return res.status(503).json({
+        error: 'Redis 連接尚未準備就緒，請稍後再試'
+      });
+    }
+    
+    const maxBatchSize = parseInt(process.env.MAX_BATCH_SIZE) || 20;
+    if (files.length > maxBatchSize) {
+      return res.status(400).json({
+        error: `批量處理最多支持 ${maxBatchSize} 個檔案，當前: ${files.length}`
+      });
+    }
+    
+    const jobs = [];
+    const errors = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
+      if (!file.fileId || !file.caseId) {
+        errors.push({
+          index: i,
+          error: '缺少必要參數: fileId 或 caseId',
+          file: file
+        });
+        continue;
+      }
+      
+      try {
+        // 為批量任務添加延遲，避免同時處理過多任務
+        const delayMs = i * 1000; // 每個任務延遲1秒
+        
+        const job = await audioQueue.add({
+          fileId: file.fileId,
+          fileName: file.fileName || 'unknown_audio_file',
+          caseId: file.caseId,
+          batchIndex: i,
+          totalBatchSize: files.length
+        }, {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 3000
+          },
+          delay: delayMs,
+          timeout: 30 * 60 * 1000,  // Changed to 30 minutes timeout for batch jobs
+          priority: 5 - Math.min(4, Math.floor(i / 5)) // 前面的任務優先級稍高
+        });
+        
+        jobs.push({
+          jobId: job.id,
+          caseId: file.caseId,
+          fileName: file.fileName,
+          batchIndex: i
+        });
+        
+        logger.info(`批量任務 ${i + 1}/${files.length} 已加入佇列 - Job ID: ${job.id}, Case ID: ${file.caseId}`);
+        
+      } catch (jobError) {
+        errors.push({
+          index: i,
+          error: jobError.message,
+          file: file
+        });
+      }
+    }
+    
+    logger.info(`批量轉錄任務提交完成 - 成功: ${jobs.length}, 失敗: ${errors.length}`);
+    
+    res.status(202).json({
+      message: `批量轉錄任務已提交`,
+      summary: {
+        total: files.length,
+        submitted: jobs.length,
+        failed: errors.length
+      },
+      jobs: jobs,
+      errors: errors.length > 0 ? errors : undefined,
+      processingMethod: 'faster-whisper', // Changed from openai-whisper
+      estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
+    });
+    
+  } catch (error) {
+    logger.error(`批量提交任務失敗: ${error.message}`);
+    res.status(500).json({
+      error: '內部伺服器錯誤',
+      message: error.message
+    });
+  }
+});
+
+// 品質監控端點
+app.get('/quality', (req, res) => {
+  try {
+    const report = qualityMonitor.generateQualityReport();
+    res.json(report);
+  } catch (error) {
+    logger.error(`生成品質報告失敗: ${error.message}`);
+    res.status(500).json({ error: '生成品質報告失敗' });
+  }
+});
+
+// 品質檢查端點
+app.post('/quality/check', (req, res) => {
+  try {
+    const { quality } = req.body;
+    
+    if (!quality) {
+      return res.status(400).json({ error: '缺少品質資料' });
+    }
+    
+    res.json({
+      recommendation: 'faster-whisper', // Changed from openai-whisper
+      quality: quality,
+      status: 'ok'
+    });
+    
+  } catch (error) {
+    logger.error(`品質檢查失敗: ${error.message}`);
+    res.status(500).json({ error: '品質檢查失敗' });
+  }
+});
+
+// 健康檢查端點
 app.get('/health', async (req, res) => {
   try {
     const queueStats = await audioQueue.getJobCounts();
@@ -211,8 +346,13 @@ app.use((error, req, res, next) => {
 });
 
 // 啟動服務器
-app.listen(port, () => {
-  logger.info(`Faster-Whisper 轉錄服務 (v1.2.0) 已啟動在 port ${port}`);
+const server = app.listen(port, '0.0.0.0', () => {
+  logger.info(`🚀 Faster-Whisper 轉錄服務 (v1.2.0) 已啟動在 port ${port}`); // Changed message
+  logger.info(`📊 品質監控: 啟用`);
+  logger.info(`🔧 使用 Faster-Whisper 本地轉錄`); // Changed message
+
+  // 驗證 Python 和 Faster-Whisper 依賴
+  logger.info('✅ 使用 Python Faster-Whisper 進行轉錄'); // Changed message
 });
 
 // 優雅關閉

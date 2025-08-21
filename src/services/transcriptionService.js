@@ -14,6 +14,29 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
+// Configuration for iPhone recordings and chunking (adapted from remote)
+const IPHONE_OPTIMIZED_CONFIG = {
+  // Using 'base' model for faster-whisper (can be changed to 'large-v3' if resources allow)
+  modelName: 'base',
+  // Chunking strategy for iPhone recordings
+  chunkDuration: 8 * 60, // 8 minutes per chunk, to reduce single segment processing time
+  // Audio preprocessing parameters (already in preprocessiPhoneAudio)
+  preprocessing: {
+    bitrate: 96,
+    sampleRate: 16000,
+    channels: 1,
+    filters: [
+      'highpass=f=80',
+      'lowpass=f=8000'
+    ]
+  },
+  // faster-whisper specific options (if any, not directly used here but for context)
+  fasterWhisperOptions: {
+    language: 'zh',
+    beam_size: 5
+  }
+};
+
 /**
  * Calls the Python script to transcribe audio using faster-whisper.
  * @param {string} audioPath The path to the audio file.
@@ -140,6 +163,50 @@ async function preprocessiPhoneAudio(inputPath, outputPath, audioInfo) {
 }
 
 /**
+ * Extracts an audio chunk (from remote)
+ */
+async function extractChunk(inputPath, startTime, endTime) {
+  const chunkPath = tmp.tmpNameSync({ postfix: `_chunk_${Date.now()}.wav` });
+  
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .seekInput(startTime)
+      .duration(endTime - startTime)
+      .audioCodec('pcm_s16le')
+      .audioFrequency(16000)  // whisper-node requires 16kHz
+      .audioChannels(1)
+      .format('wav')
+      .output(chunkPath)
+      .on('end', () => resolve(chunkPath))
+      .on('error', reject)
+      .run();
+  });
+}
+
+/**
+ * Splits audio by time into chunks (from remote)
+ */
+async function splitByTime(inputPath, chunkDuration) {
+  const audioInfo = await getAudioInfo(inputPath);
+  const totalDuration = audioInfo.duration;
+  const numChunks = Math.ceil(totalDuration / chunkDuration);
+  
+  const chunks = [];
+  
+  for (let i = 0; i < numChunks; i++) {
+    const startTime = i * chunkDuration;
+    const endTime = Math.min((i + 1) * chunkDuration, totalDuration);
+    
+    const chunkPath = await extractChunk(inputPath, startTime, endTime);
+    chunks.push(chunkPath);
+    
+    logger.info(`創建時間片段 ${i + 1}/${numChunks}: ${(startTime/60).toFixed(1)}-${(endTime/60).toFixed(1)} 分鐘`);
+  }
+  
+  return chunks;
+}
+
+/**
  * Assesses the quality of the transcribed text.
  */
 function assessTranscriptionQuality(transcript) {
@@ -180,20 +247,39 @@ async function transcribeAudio(inputPath) {
     const audioInfo = await getAudioInfo(inputPath);
     logger.info(`Audio info retrieved: ${audioInfo.duration}s, ${audioInfo.sizeMB.toFixed(2)}MB`);
 
-    // 2. Pre-process audio
-    const processedPath = path.join(tempDir.name, 'processed.mp3');
-    await preprocessiPhoneAudio(inputPath, processedPath, audioInfo);
+    let fullTranscript = '';
 
-    // 3. Transcribe using faster-whisper python script
-    const transcript = await transcribeWithFasterWhisper(processedPath);
-    logger.info(`Transcription received from Python script. Length: ${transcript.length}`);
+    // Check if chunking is needed for very long audio
+    if (audioInfo.duration > IPHONE_OPTIMIZED_CONFIG.chunkDuration) {
+      logger.info(`Audio duration (${audioInfo.duration}s) exceeds chunk duration (${IPHONE_OPTIMIZED_CONFIG.chunkDuration}s). Splitting into chunks.`);
+      const chunks = await splitByTime(inputPath, IPHONE_OPTIMIZED_CONFIG.chunkDuration);
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkPath = chunks[i];
+        logger.info(`Transcribing chunk ${i + 1}/${chunks.length}: ${chunkPath}`);
+        const processedPath = path.join(tempDir.name, `processed_chunk_${i}.mp3`);
+        await preprocessiPhoneAudio(chunkPath, processedPath, audioInfo); // Preprocess each chunk
+
+        const chunkTranscript = await transcribeWithFasterWhisper(processedPath);
+        fullTranscript += chunkTranscript + ' '; // Concatenate transcripts
+        logger.info(`Chunk ${i + 1} transcription received. Length: ${chunkTranscript.length}`);
+      }
+    } else {
+      // 2. Pre-process audio (single file)
+      const processedPath = path.join(tempDir.name, 'processed.mp3');
+      await preprocessiPhoneAudio(inputPath, processedPath, audioInfo);
+
+      // 3. Transcribe using faster-whisper python script (single file)
+      fullTranscript = await transcribeWithFasterWhisper(processedPath);
+      logger.info(`Transcription received from Python script. Length: ${fullTranscript.length}`);
+    }
 
     // 4. Assess quality
-    const quality = assessTranscriptionQuality(transcript);
+    const quality = assessTranscriptionQuality(fullTranscript);
     logger.info(`Transcription quality assessed: Score ${quality.score}, Confidence ${quality.confidence}`);
 
     return {
-      transcript: transcript,
+      transcript: fullTranscript,
       quality: quality,
       audioInfo: audioInfo
     };
