@@ -5,7 +5,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const winston = require('winston');
-const Queue = require('bull');
 const fs = require('fs');
 const { transcribeAudio, assessTranscriptionQuality } = require('./services/transcriptionService');
 const { downloadFromGoogleDrive } = require('./services/googleDriveService');
@@ -42,89 +41,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// 設定 Queue - 支援 Redis 和內存模式
-let audioQueue;
-let useRedis = true;
+// 簡化版 - 移除佇列系統，由 GAS 管理佇列
+logger.info('🔄 Zeabur 簡化版 - 專職轉錄服務 (佇列由 GAS 管理)');
 
-// 檢查是否強制使用內存模式
-if (process.env.FORCE_MEMORY_QUEUE === 'true') {
-  useRedis = false;
-  logger.info('🔄 強制使用內存佇列模式 (無 Redis)');
-}
-
-if (useRedis) {
-  // 嘗試 Redis 配置
-  let redisConfig;
-  
-  if (process.env.REDIS_URL) {
-    redisConfig = process.env.REDIS_URL;
-  } else if (process.env.REDIS_URI) {
-    redisConfig = process.env.REDIS_URI;
-  } else if (process.env.REDIS_CONNECTION_STRING) {
-    redisConfig = process.env.REDIS_CONNECTION_STRING;
-  } else {
-    // 嘗試使用 Zeabur 常見的環境變數格式
-    const redisHost = process.env.REDIS_HOST || process.env.ZEABUR_REDIS_HOST || 'redis';
-    const redisPort = process.env.REDIS_PORT || process.env.ZEABUR_REDIS_PORT || '6379';
-    const redisPassword = process.env.REDIS_PASSWORD || process.env.ZEABUR_REDIS_PASSWORD || '';
-    
-    if (redisPassword) {
-      redisConfig = `redis://:${redisPassword}@${redisHost}:${redisPort}`;
-    } else {
-      redisConfig = `redis://${redisHost}:${redisPort}`;
-    }
-  }
-  
-  logger.info(`Connecting to Redis via: ${redisConfig.replace(/:([^@:]+)@/, ':****@')}`);
-  
-  try {
-    audioQueue = new Queue('audio transcription', redisConfig);
-  } catch (error) {
-    logger.error(`Redis 初始化失敗: ${error.message}`);
-    useRedis = false;
-  }
-}
-
-// 如果 Redis 失敗，回退到內存佇列
-if (!useRedis) {
-  logger.info('🔄 使用內存佇列模式 (不依賴 Redis)');
-  // 創建一個簡單的內存佇列實現
-  const MemoryQueue = require('./services/memoryQueue');
-  audioQueue = new MemoryQueue();
-}
-
-// 佇列事件處理
-if (useRedis) {
-  // Redis 模式的事件處理
-  audioQueue.on('error', (error) => {
-    logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
-    if (error.code === 'ECONNREFUSED') {
-      logger.warn(`⚠️  Redis 連接被拒絕，考慮切換到內存佇列模式`);
-      logger.warn(`可以設定環境變數 FORCE_MEMORY_QUEUE=true 使用內存佇列`);
-    }
-  });
-
-  audioQueue.on('ready', () => {
-    logger.info(`✅ Redis 佇列連接成功!`);
-  });
-} else {
-  // 內存模式已經在 MemoryQueue 類中處理事件
-}
-
-// 通用任務失敗處理
-audioQueue.on('failed', (job, err) => {
-  logger.error(`任務失敗 Job ID: ${job.id}, 錯誤: ${err.message}`);
-});
-
-// 設定 Queue 處理器
-const CONCURRENT_JOBS = process.env.CONCURRENT_JOBS || 1; // 預設改為1，因為 whisper 已經很耗資源
-audioQueue.process(CONCURRENT_JOBS, async (job) => {
-  return await processTranscriptionJob(job);
-});
-
-// 任務處理函數
-async function processTranscriptionJob(job) {
-  const { fileId, fileName, caseId } = job.data;
+// 任務處理函數 (移除佇列依賴)
+async function processTranscriptionJob(jobData) {
+  const { fileId, fileName, caseId } = jobData.data || jobData;
   let localFilePath = null;
 
   try {
@@ -168,14 +90,21 @@ async function processTranscriptionJob(job) {
     };
 
   } catch (error) {
-    logger.error(`❌ 轉錄最終失敗 - Case ID: ${caseId}, Error: ${error.message}`);
+    logger.error(`❌ 轉錄失敗 - Case ID: ${caseId}, Error: ${error.message}`);
     qualityMonitor.recordTranscription({
       success: false,
       caseId: caseId,
       error: error.message
     });
-    await updateGoogleSheet(caseId, `轉錄失敗: ${error.message}`, '轉錄失敗');
-    throw error; // 讓 Bull Queue 知道任務失敗
+    
+    // 嘗試更新 Sheets 失敗狀態
+    try {
+      await updateGoogleSheet(caseId, `轉錄失敗: ${error.message}`, '轉錄失敗');
+    } catch (sheetError) {
+      logger.error(`更新失敗狀態到 Sheets 也失敗: ${sheetError.message}`);
+    }
+    
+    throw error;
   } finally {
     // 清理本地臨時檔案
     if (localFilePath && fs.existsSync(localFilePath)) {
@@ -194,244 +123,56 @@ async function processTranscriptionJob(job) {
 
 app.get('/', (req, res) => {
   res.json({
-    service: 'Zeabur Whisper Optimized Transcription Service',
-    version: '1.2.0', // Trivial version bump
+    service: 'Zeabur 簡化轉錄服務',
+    version: '2.0.0', 
     status: 'running',
-    description: '專為 iPhone 音檔優化的 AI 轉錄服務，使用 OpenAI whisper 提供高品質轉錄'
+    description: '專為 GAS 智能佇列設計的單純轉錄服務',
+    queueManagement: 'Managed by GAS Smart Queue'
   });
 });
 
+// 簡化版 /transcribe API - 僅支援 direct 模式
 app.post('/transcribe', async (req, res) => {
   try {
-    const { fileId, fileName, caseId, mode } = req.body;
+    const { fileId, fileName, caseId } = req.body;
     if (!fileId || !caseId) {
       return res.status(400).json({ error: '缺少必要參數: fileId 或 caseId' });
     }
 
-    // 支援不同處理模式
-    const processingMode = mode || process.env.DEFAULT_PROCESSING_MODE || 'queue';
+    logger.info(`🚀 開始轉錄任務 - Case ID: ${caseId}`);
     
-    if (processingMode === 'direct') {
-      // 直接同步處理（不使用佇列）
-      logger.info(`🚀 直接處理轉錄任務 - Case ID: ${caseId}`);
-      
-      // 設定請求超時為 45 分鐘
-      req.setTimeout(45 * 60 * 1000);
-      
-      try {
-        const result = await processTranscriptionJob({ 
-          data: { fileId, fileName, caseId } 
-        });
-        
-        res.json({
-          message: '轉錄任務已完成',
-          caseId,
-          transcript: result.transcript,
-          quality: result.quality,
-          processingMethod: 'openai-whisper-direct'
-        });
-        
-      } catch (directError) {
-        logger.error(`直接處理失敗: ${directError.message}`);
-        res.status(500).json({ 
-          error: '轉錄處理失敗', 
-          message: directError.message 
-        });
-      }
-      
-    } else {
-      // 使用佇列處理（預設行為）
-      const job = await audioQueue.add({ fileId, fileName, caseId }, {
-        attempts: 2,
-        backoff: { type: 'exponential', delay: 5000 },
-        timeout: 30 * 60 * 1000
+    // 設定請求超時為 45 分鐘
+    req.setTimeout(45 * 60 * 1000);
+    
+    try {
+      const result = await processTranscriptionJob({ 
+        data: { fileId, fileName, caseId } 
       });
-
-      logger.info(`任務已加入佇列 - Job ID: ${job.id}, Case ID: ${caseId}`);
-      res.status(202).json({
-        message: '轉錄任務已提交',
-        jobId: job.id,
+      
+      res.json({
+        success: true,
+        message: '轉錄任務已完成',
         caseId,
-        processingMethod: 'openai-whisper'
+        transcript: result.transcript,
+        quality: result.quality,
+        processingMethod: 'openai-whisper-direct'
+      });
+      
+    } catch (directError) {
+      logger.error(`轉錄處理失敗: ${directError.message}`);
+      res.status(500).json({ 
+        success: false,
+        error: '轉錄處理失敗', 
+        message: directError.message 
       });
     }
 
   } catch (error) {
-    logger.error(`提交任務失敗: ${error.message}`);
-    res.status(500).json({ error: '內部伺服器錯誤', message: error.message });
-  }
-});
-
-// 批量轉錄端點
-app.post('/transcribe/batch', async (req, res) => {
-  try {
-    const { files, mode } = req.body;
-    
-    if (!files || !Array.isArray(files) || files.length === 0) {
-      return res.status(400).json({
-        error: '缺少必要參數: files 陣列'
-      });
-    }
-
-    const processingMode = mode || process.env.DEFAULT_PROCESSING_MODE || 'queue';
-    const maxParallelFiles = parseInt(process.env.MAX_PARALLEL_FILES) || 3; // 最大並行處理數
-
-    if (processingMode === 'parallel' && files.length <= maxParallelFiles) {
-      // 並行直接處理（適合少量檔案）
-      logger.info(`🚀 並行處理 ${files.length} 個音檔`);
-      
-      // 設定請求超時
-      req.setTimeout(60 * 60 * 1000); // 1小時
-      
-      try {
-        const promises = files.map(async (file, index) => {
-          if (!file.fileId || !file.caseId) {
-            return {
-              success: false,
-              caseId: file.caseId,
-              error: '缺少必要參數: fileId 或 caseId'
-            };
-          }
-          
-          try {
-            const result = await processTranscriptionJob({
-              data: { 
-                fileId: file.fileId, 
-                fileName: file.fileName, 
-                caseId: file.caseId 
-              }
-            });
-            
-            return {
-              success: true,
-              caseId: file.caseId,
-              transcript: result.transcript,
-              quality: result.quality
-            };
-          } catch (error) {
-            return {
-              success: false,
-              caseId: file.caseId,
-              error: error.message
-            };
-          }
-        });
-        
-        const results = await Promise.all(promises);
-        const successful = results.filter(r => r.success);
-        const failed = results.filter(r => !r.success);
-        
-        res.json({
-          message: `並行處理完成`,
-          summary: {
-            total: files.length,
-            successful: successful.length,
-            failed: failed.length
-          },
-          results: results,
-          processingMethod: 'openai-whisper-parallel'
-        });
-        
-        return;
-        
-      } catch (parallelError) {
-        logger.error(`並行處理失敗: ${parallelError.message}`);
-        res.status(500).json({
-          error: '並行處理失敗',
-          message: parallelError.message
-        });
-        return;
-      }
-    }
-    
-    // 檔案數量過多或使用佇列模式，回退到佇列處理
-    if (!audioQueue) {
-      return res.status(503).json({
-        error: 'Redis 連接尚未準備就緒，請稍後再試'
-      });
-    }
-    
-    const maxBatchSize = parseInt(process.env.MAX_BATCH_SIZE) || 20;
-    if (files.length > maxBatchSize) {
-      return res.status(400).json({
-        error: `批量處理最多支持 ${maxBatchSize} 個檔案，當前: ${files.length}`
-      });
-    }
-    
-    const jobs = [];
-    const errors = [];
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      
-      if (!file.fileId || !file.caseId) {
-        errors.push({
-          index: i,
-          error: '缺少必要參數: fileId 或 caseId',
-          file: file
-        });
-        continue;
-      }
-      
-      try {
-        // 為批量任務添加延遲，避免同時處理過多任務
-        const delayMs = i * 1000; // 每個任務延遲1秒
-        
-        const job = await audioQueue.add({
-          fileId: file.fileId,
-          fileName: file.fileName || 'unknown_audio_file',
-          caseId: file.caseId,
-          batchIndex: i,
-          totalBatchSize: files.length
-        }, {
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 3000
-          },
-          delay: delayMs,
-          timeout: 30 * 60 * 1000,  // Changed to 30 minutes timeout for batch jobs
-          priority: 5 - Math.min(4, Math.floor(i / 5)) // 前面的任務優先級稍高
-        });
-        
-        jobs.push({
-          jobId: job.id,
-          caseId: file.caseId,
-          fileName: file.fileName,
-          batchIndex: i
-        });
-        
-        logger.info(`批量任務 ${i + 1}/${files.length} 已加入佇列 - Job ID: ${job.id}, Case ID: ${file.caseId}`);
-        
-      } catch (jobError) {
-        errors.push({
-          index: i,
-          error: jobError.message,
-          file: file
-        });
-      }
-    }
-    
-    logger.info(`批量轉錄任務提交完成 - 成功: ${jobs.length}, 失敗: ${errors.length}`);
-    
-    res.status(202).json({
-      message: `批量轉錄任務已提交`,
-      summary: {
-        total: files.length,
-        submitted: jobs.length,
-        failed: errors.length
-      },
-      jobs: jobs,
-      errors: errors.length > 0 ? errors : undefined,
-      processingMethod: 'openai-whisper',
-      estimatedProcessingTime: `約 ${Math.ceil(files.length / 3)} 分鐘 (3個並發)`
-    });
-    
-  } catch (error) {
-    logger.error(`批量提交任務失敗: ${error.message}`);
-    res.status(500).json({
-      error: '內部伺服器錯誤',
-      message: error.message
+    logger.error(`轉錄 API 請求失敗: ${error.message}`);
+    res.status(500).json({ 
+      success: false,
+      error: '內部伺服器錯誤', 
+      message: error.message 
     });
   }
 });
@@ -447,65 +188,43 @@ app.get('/quality', (req, res) => {
   }
 });
 
-// 品質檢查端點
-app.post('/quality/check', (req, res) => {
-  try {
-    const { quality } = req.body;
-    
-    if (!quality) {
-      return res.status(400).json({ error: '缺少品質資料' });
-    }
-    
-    res.json({
-      recommendation: 'openai-whisper',
-      quality: quality,
-      status: 'ok'
-    });
-    
-  } catch (error) {
-    logger.error(`品質檢查失敗: ${error.message}`);
-    res.status(500).json({ error: '品質檢查失敗' });
-  }
-});
-
-// 健康檢查端點
+// 簡化版健康檢查端點
 app.get('/health', async (req, res) => {
-  try {
-    const queueStats = await audioQueue.getJobCounts();
-    res.json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      queue: queueStats
-    });
-  } catch (error) {
-    res.status(503).json({
-        status: 'unhealthy',
-        reason: 'Could not connect to Redis or Bull queue.',
-        error: error.message
-    });
-  }
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    service: 'zeabur-transcription-simplified',
+    version: '2.0.0'
+  });
 });
 
-app.get('/job/:jobId', async (req, res) => {
-    try {
-      const job = await audioQueue.getJob(req.params.jobId);
-      if (!job) {
-        return res.status(404).json({ error: '任務不存在' });
-      }
-      res.json({
-        id: job.id,
-        data: job.data,
-        progress: job.progress,
-        state: await job.getState(),
-        result: job.returnvalue,
-        failedReason: job.failedReason
-      });
-    } catch (error) {
-      logger.error(`取得任務狀態失敗: ${error.message}`);
-      res.status(500).json({ error: '內部伺服器錯誤' });
-    }
+// 測試連接端點
+app.get('/test', async (req, res) => {
+  try {
+    // 測試 Google Services 連接
+    const { checkConnection: checkSheetsConnection } = require('./services/googleSheetsService');
+    const { checkFileAccess } = require('./services/googleDriveService');
+    
+    const sheetsStatus = await checkSheetsConnection();
+    
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      services: {
+        googleSheets: sheetsStatus.connected ? 'connected' : 'failed',
+        googleDrive: 'available',  // 需要特定檔案ID來測試
+        whisperService: 'available'
+      },
+      message: '簡化版轉錄服務運行正常'
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
 });
 
 // 錯誤處理中介軟體
@@ -516,19 +235,17 @@ app.use((error, req, res, next) => {
 
 // 啟動服務器
 const server = app.listen(port, '0.0.0.0', () => {
-  logger.info(`🚀 Faster-Whisper 轉錄服務 (v1.2.0) 已啟動在 port ${port}`); // Changed message
+  logger.info(`🚀 Zeabur 簡化轉錄服務 (v2.0.0) 已啟動在 port ${port}`);
   logger.info(`📊 品質監控: 啟用`);
-  logger.info(`🔧 使用 Faster-Whisper 本地轉錄`); // Changed message
-
-  // 驗證 Python 和 Faster-Whisper 依賴
-  logger.info('✅ 使用 Python Faster-Whisper 進行轉錄'); // Changed message
+  logger.info(`🔧 使用 OpenAI Whisper 本地轉錄`);
+  logger.info(`🎯 佇列管理: 由 GAS 智能佇列負責`);
 });
 
-// 優雅關閉
+// 簡化版優雅關閉
 const gracefulShutdown = () => {
   logger.info('收到關閉信號，正在關閉服務器...');
-  audioQueue.close().then(() => {
-    logger.info('Bull Queue 已關閉');
+  server.close(() => {
+    logger.info('服務器已關閉');
     process.exit(0);
   });
 };
