@@ -42,15 +42,49 @@ app.use((req, res, next) => {
   next();
 });
 
-// 設定 Redis 和 Bull Queue
-const redisUrl = process.env.REDIS_URL || process.env.REDIS_URI || process.env.REDIS_CONNECTION_STRING || 'redis://localhost:6379';
-logger.info(`Connecting to Redis via: ${redisUrl}`);
+// 設定 Redis 和 Bull Queue - 支援多種 Zeabur 環境變數格式
+let redisConfig;
 
-const audioQueue = new Queue('audio transcription', redisUrl);
+if (process.env.REDIS_URL) {
+  redisConfig = process.env.REDIS_URL;
+} else if (process.env.REDIS_URI) {
+  redisConfig = process.env.REDIS_URI;
+} else if (process.env.REDIS_CONNECTION_STRING) {
+  redisConfig = process.env.REDIS_CONNECTION_STRING;
+} else {
+  // 嘗試使用 Zeabur 常見的環境變數格式
+  const redisHost = process.env.REDIS_HOST || process.env.ZEABUR_REDIS_HOST || 'redis';
+  const redisPort = process.env.REDIS_PORT || process.env.ZEABUR_REDIS_PORT || '6379';
+  const redisPassword = process.env.REDIS_PASSWORD || process.env.ZEABUR_REDIS_PASSWORD || '';
+  
+  if (redisPassword) {
+    redisConfig = `redis://:${redisPassword}@${redisHost}:${redisPort}`;
+  } else {
+    redisConfig = `redis://${redisHost}:${redisPort}`;
+  }
+}
+
+logger.info(`Connecting to Redis via: ${redisConfig.replace(/:([^@:]+)@/, ':****@')}`); // 隱藏密碼
+
+const audioQueue = new Queue('audio transcription', redisConfig);
 
 // Redis 連接錯誤處理
 audioQueue.on('error', (error) => {
   logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
+  logger.error(`請檢查以下項目:`);
+  logger.error(`1. Zeabur Redis 服務是否正常運行`);
+  logger.error(`2. 環境變數是否正確設定`);
+  logger.error(`3. 網路連接是否正常`);
+});
+
+// 添加 Redis 連接成功日誌
+audioQueue.on('ready', () => {
+  logger.info(`✅ Redis 連接成功!`);
+});
+
+// 添加連接失敗重試邏輯
+audioQueue.on('failed', (job, err) => {
+  logger.error(`任務失敗 Job ID: ${job.id}, 錯誤: ${err.message}`);
 });
 
 // 設定 Queue 處理器
