@@ -42,47 +42,76 @@ app.use((req, res, next) => {
   next();
 });
 
-// 設定 Redis 和 Bull Queue - 支援多種 Zeabur 環境變數格式
-let redisConfig;
+// 設定 Queue - 支援 Redis 和內存模式
+let audioQueue;
+let useRedis = true;
 
-if (process.env.REDIS_URL) {
-  redisConfig = process.env.REDIS_URL;
-} else if (process.env.REDIS_URI) {
-  redisConfig = process.env.REDIS_URI;
-} else if (process.env.REDIS_CONNECTION_STRING) {
-  redisConfig = process.env.REDIS_CONNECTION_STRING;
-} else {
-  // 嘗試使用 Zeabur 常見的環境變數格式
-  const redisHost = process.env.REDIS_HOST || process.env.ZEABUR_REDIS_HOST || 'redis';
-  const redisPort = process.env.REDIS_PORT || process.env.ZEABUR_REDIS_PORT || '6379';
-  const redisPassword = process.env.REDIS_PASSWORD || process.env.ZEABUR_REDIS_PASSWORD || '';
+// 檢查是否強制使用內存模式
+if (process.env.FORCE_MEMORY_QUEUE === 'true') {
+  useRedis = false;
+  logger.info('🔄 強制使用內存佇列模式 (無 Redis)');
+}
+
+if (useRedis) {
+  // 嘗試 Redis 配置
+  let redisConfig;
   
-  if (redisPassword) {
-    redisConfig = `redis://:${redisPassword}@${redisHost}:${redisPort}`;
+  if (process.env.REDIS_URL) {
+    redisConfig = process.env.REDIS_URL;
+  } else if (process.env.REDIS_URI) {
+    redisConfig = process.env.REDIS_URI;
+  } else if (process.env.REDIS_CONNECTION_STRING) {
+    redisConfig = process.env.REDIS_CONNECTION_STRING;
   } else {
-    redisConfig = `redis://${redisHost}:${redisPort}`;
+    // 嘗試使用 Zeabur 常見的環境變數格式
+    const redisHost = process.env.REDIS_HOST || process.env.ZEABUR_REDIS_HOST || 'redis';
+    const redisPort = process.env.REDIS_PORT || process.env.ZEABUR_REDIS_PORT || '6379';
+    const redisPassword = process.env.REDIS_PASSWORD || process.env.ZEABUR_REDIS_PASSWORD || '';
+    
+    if (redisPassword) {
+      redisConfig = `redis://:${redisPassword}@${redisHost}:${redisPort}`;
+    } else {
+      redisConfig = `redis://${redisHost}:${redisPort}`;
+    }
+  }
+  
+  logger.info(`Connecting to Redis via: ${redisConfig.replace(/:([^@:]+)@/, ':****@')}`);
+  
+  try {
+    audioQueue = new Queue('audio transcription', redisConfig);
+  } catch (error) {
+    logger.error(`Redis 初始化失敗: ${error.message}`);
+    useRedis = false;
   }
 }
 
-logger.info(`Connecting to Redis via: ${redisConfig.replace(/:([^@:]+)@/, ':****@')}`); // 隱藏密碼
+// 如果 Redis 失敗，回退到內存佇列
+if (!useRedis) {
+  logger.info('🔄 使用內存佇列模式 (不依賴 Redis)');
+  // 創建一個簡單的內存佇列實現
+  const MemoryQueue = require('./services/memoryQueue');
+  audioQueue = new MemoryQueue();
+}
 
-const audioQueue = new Queue('audio transcription', redisConfig);
+// 佇列事件處理
+if (useRedis) {
+  // Redis 模式的事件處理
+  audioQueue.on('error', (error) => {
+    logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
+    if (error.code === 'ECONNREFUSED') {
+      logger.warn(`⚠️  Redis 連接被拒絕，考慮切換到內存佇列模式`);
+      logger.warn(`可以設定環境變數 FORCE_MEMORY_QUEUE=true 使用內存佇列`);
+    }
+  });
 
-// Redis 連接錯誤處理
-audioQueue.on('error', (error) => {
-  logger.error(`Redis/Queue 連接錯誤: ${error.message}`);
-  logger.error(`請檢查以下項目:`);
-  logger.error(`1. Zeabur Redis 服務是否正常運行`);
-  logger.error(`2. 環境變數是否正確設定`);
-  logger.error(`3. 網路連接是否正常`);
-});
+  audioQueue.on('ready', () => {
+    logger.info(`✅ Redis 佇列連接成功!`);
+  });
+} else {
+  // 內存模式已經在 MemoryQueue 類中處理事件
+}
 
-// 添加 Redis 連接成功日誌
-audioQueue.on('ready', () => {
-  logger.info(`✅ Redis 連接成功!`);
-});
-
-// 添加連接失敗重試邏輯
+// 通用任務失敗處理
 audioQueue.on('failed', (job, err) => {
   logger.error(`任務失敗 Job ID: ${job.id}, 錯誤: ${err.message}`);
 });
