@@ -203,24 +203,58 @@ app.get('/', (req, res) => {
 
 app.post('/transcribe', async (req, res) => {
   try {
-    const { fileId, fileName, caseId } = req.body;
+    const { fileId, fileName, caseId, mode } = req.body;
     if (!fileId || !caseId) {
       return res.status(400).json({ error: '缺少必要參數: fileId 或 caseId' });
     }
 
-    const job = await audioQueue.add({ fileId, fileName, caseId }, {
-      attempts: 2, // 加上第一次，總共嘗試2次
-      backoff: { type: 'exponential', delay: 5000 },
-      timeout: 30 * 60 * 1000 // Set job timeout to 30 minutes (30 * 60 * 1000 ms)
-    });
+    // 支援不同處理模式
+    const processingMode = mode || process.env.DEFAULT_PROCESSING_MODE || 'queue';
+    
+    if (processingMode === 'direct') {
+      // 直接同步處理（不使用佇列）
+      logger.info(`🚀 直接處理轉錄任務 - Case ID: ${caseId}`);
+      
+      // 設定請求超時為 45 分鐘
+      req.setTimeout(45 * 60 * 1000);
+      
+      try {
+        const result = await processTranscriptionJob({ 
+          data: { fileId, fileName, caseId } 
+        });
+        
+        res.json({
+          message: '轉錄任務已完成',
+          caseId,
+          transcript: result.transcript,
+          quality: result.quality,
+          processingMethod: 'openai-whisper-direct'
+        });
+        
+      } catch (directError) {
+        logger.error(`直接處理失敗: ${directError.message}`);
+        res.status(500).json({ 
+          error: '轉錄處理失敗', 
+          message: directError.message 
+        });
+      }
+      
+    } else {
+      // 使用佇列處理（預設行為）
+      const job = await audioQueue.add({ fileId, fileName, caseId }, {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 5000 },
+        timeout: 30 * 60 * 1000
+      });
 
-    logger.info(`任務已加入佇列 - Job ID: ${job.id}, Case ID: ${caseId}`);
-    res.status(202).json({
-      message: '轉錄任務已提交',
-      jobId: job.id,
-      caseId,
-      processingMethod: 'openai-whisper'
-    });
+      logger.info(`任務已加入佇列 - Job ID: ${job.id}, Case ID: ${caseId}`);
+      res.status(202).json({
+        message: '轉錄任務已提交',
+        jobId: job.id,
+        caseId,
+        processingMethod: 'openai-whisper'
+      });
+    }
 
   } catch (error) {
     logger.error(`提交任務失敗: ${error.message}`);
@@ -231,14 +265,86 @@ app.post('/transcribe', async (req, res) => {
 // 批量轉錄端點
 app.post('/transcribe/batch', async (req, res) => {
   try {
-    const { files } = req.body;
+    const { files, mode } = req.body;
     
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({
         error: '缺少必要參數: files 陣列'
       });
     }
+
+    const processingMode = mode || process.env.DEFAULT_PROCESSING_MODE || 'queue';
+    const maxParallelFiles = parseInt(process.env.MAX_PARALLEL_FILES) || 3; // 最大並行處理數
+
+    if (processingMode === 'parallel' && files.length <= maxParallelFiles) {
+      // 並行直接處理（適合少量檔案）
+      logger.info(`🚀 並行處理 ${files.length} 個音檔`);
+      
+      // 設定請求超時
+      req.setTimeout(60 * 60 * 1000); // 1小時
+      
+      try {
+        const promises = files.map(async (file, index) => {
+          if (!file.fileId || !file.caseId) {
+            return {
+              success: false,
+              caseId: file.caseId,
+              error: '缺少必要參數: fileId 或 caseId'
+            };
+          }
+          
+          try {
+            const result = await processTranscriptionJob({
+              data: { 
+                fileId: file.fileId, 
+                fileName: file.fileName, 
+                caseId: file.caseId 
+              }
+            });
+            
+            return {
+              success: true,
+              caseId: file.caseId,
+              transcript: result.transcript,
+              quality: result.quality
+            };
+          } catch (error) {
+            return {
+              success: false,
+              caseId: file.caseId,
+              error: error.message
+            };
+          }
+        });
+        
+        const results = await Promise.all(promises);
+        const successful = results.filter(r => r.success);
+        const failed = results.filter(r => !r.success);
+        
+        res.json({
+          message: `並行處理完成`,
+          summary: {
+            total: files.length,
+            successful: successful.length,
+            failed: failed.length
+          },
+          results: results,
+          processingMethod: 'openai-whisper-parallel'
+        });
+        
+        return;
+        
+      } catch (parallelError) {
+        logger.error(`並行處理失敗: ${parallelError.message}`);
+        res.status(500).json({
+          error: '並行處理失敗',
+          message: parallelError.message
+        });
+        return;
+      }
+    }
     
+    // 檔案數量過多或使用佇列模式，回退到佇列處理
     if (!audioQueue) {
       return res.status(503).json({
         error: 'Redis 連接尚未準備就緒，請稍後再試'
