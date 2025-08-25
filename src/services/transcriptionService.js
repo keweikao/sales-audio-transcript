@@ -41,17 +41,34 @@ const IPHONE_OPTIMIZED_CONFIG = {
  * @param {string} audioPath The path to the audio file.
  * @returns {Promise<string>} A promise that resolves with the transcribed text.
  */
+// 全域變數追蹤當前進程，確保同時只有一個 Whisper 進程運行
+let currentWhisperProcess = null;
+
 function transcribeWithOpenAIWhisper(audioPath) {
   return new Promise((resolve, reject) => {
+    // 🚫 如果已經有進程在運行，等待它完成
+    if (currentWhisperProcess) {
+      logger.warn(`⚠️ 偵測到已有 Whisper 進程運行，等待完成...`);
+      return reject(new Error('Another Whisper process is already running. Sequential processing violated.'));
+    }
+    
     const pythonScriptPath = path.join(__dirname, 'whisper_transcribe.py');
+    logger.info(`🚀 啟動 Python Whisper 進程: ${path.basename(audioPath)}`);
+    
     const pythonProcess = spawn('python3', [pythonScriptPath, audioPath, '--output-json'], {
       timeout: 29 * 60 * 1000 // 29 minutes timeout for the Python process
     });
+    
+    // 設定當前進程
+    currentWhisperProcess = pythonProcess;
 
     // Handle process timeout
     pythonProcess.on('timeout', () => {
-      logger.error('Python script timed out.');
+      logger.error('⏰ Python script timed out.');
       pythonProcess.kill(); // Terminate the process
+      // 清理當前進程追蹤
+      currentWhisperProcess = null;
+      logger.info(`🔄 Python 進程超時，已清理進程追蹤`);
       reject(new Error('Transcription process exceeded its time limit (29 minutes).'));
     });
 
@@ -72,8 +89,12 @@ function transcribeWithOpenAIWhisper(audioPath) {
 
     // Handle process exit
     pythonProcess.on('close', (code) => {
+      // 清理當前進程追蹤
+      currentWhisperProcess = null;
+      logger.info(`🔄 Python Whisper 進程結束，已清理進程追蹤`);
+      
       if (code === 0) {
-        logger.info('Python script finished successfully.');
+        logger.info('✅ Python script finished successfully.');
         try {
           // Try to parse as JSON first, fallback to plain text
           const result = JSON.parse(transcript.trim());
@@ -83,14 +104,16 @@ function transcribeWithOpenAIWhisper(audioPath) {
           resolve(transcript.trim());
         }
       } else {
-        logger.error(`Python script exited with code ${code}`);
+        logger.error(`❌ Python script exited with code ${code}`);
         reject(new Error(`Transcription failed with exit code ${code}. Error: ${errorMessage}`));
       }
     });
 
     // Handle process errors
     pythonProcess.on('error', (err) => {
-      logger.error('Failed to start Python script.', err);
+      // 清理當前進程追蹤
+      currentWhisperProcess = null;
+      logger.error('❌ Failed to start Python script.', err);
       reject(err);
     });
   });
@@ -260,18 +283,51 @@ async function transcribeAudio(inputPath) {
       logger.info(`Audio duration (${audioInfo.duration}s) exceeds chunk duration (${IPHONE_OPTIMIZED_CONFIG.chunkDuration}s). Splitting into chunks.`);
       const chunks = await splitByTime(inputPath, IPHONE_OPTIMIZED_CONFIG.chunkDuration);
 
-      // 序列處理每個 chunk 以避免同時運行多個 Whisper 模型
+      // 🔄 嚴格序列處理每個 chunk，一次只處理一個，避免資源過載
+      logger.info(`📊 開始序列處理 ${chunks.length} 個音檔片段`);
+      
       for (let i = 0; i < chunks.length; i++) {
         const chunkPath = chunks[i];
-        logger.info(`Transcribing chunk ${i + 1}/${chunks.length}: ${chunkPath}`);
+        logger.info(`🎵 開始處理片段 ${i + 1}/${chunks.length}: ${path.basename(chunkPath)}`);
+        logger.info(`📂 片段路徑: ${chunkPath}`);
+        
+        // 步驟 1: 預處理音檔
         const processedPath = path.join(tempDir.name, `processed_chunk_${i}.mp3`);
-        await preprocessiPhoneAudio(chunkPath, processedPath, audioInfo); // Preprocess each chunk
-
+        logger.info(`🔧 預處理片段 ${i + 1}...`);
+        await preprocessiPhoneAudio(chunkPath, processedPath, audioInfo);
+        
+        // 步驟 2: 轉錄處理（確保一個完成後才開始下一個）
+        logger.info(`🤖 轉錄片段 ${i + 1}，等待 Whisper 處理完成...`);
+        const startTime = Date.now();
+        
         const result = await transcribeWithOpenAIWhisper(processedPath);
+        
+        const endTime = Date.now();
+        const processingTime = Math.round((endTime - startTime) / 1000);
+        
         const chunkTranscript = typeof result === 'string' ? result : result.text;
-        fullTranscript += chunkTranscript + ' '; // Concatenate transcripts
-        logger.info(`Chunk ${i + 1} transcription received. Length: ${chunkTranscript.length}`);
+        fullTranscript += chunkTranscript + ' ';
+        
+        logger.info(`✅ 片段 ${i + 1} 轉錄完成 - 耗時: ${processingTime}秒, 文字長度: ${chunkTranscript.length}`);
+        
+        // 清理當前片段的臨時檔案，釋放空間
+        try {
+          if (fs.existsSync(chunkPath)) fs.unlinkSync(chunkPath);
+          if (fs.existsSync(processedPath)) fs.unlinkSync(processedPath);
+          logger.info(`🗑️ 已清理片段 ${i + 1} 的臨時檔案`);
+        } catch (cleanupErr) {
+          logger.warn(`⚠️ 清理片段 ${i + 1} 臨時檔案失敗: ${cleanupErr.message}`);
+        }
+        
+        // 在片段之間加入短暫延遲，確保資源完全釋放
+        if (i < chunks.length - 1) {
+          logger.info(`⏸️ 片段 ${i + 1} 處理完成，等待 2 秒後處理下一片段...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
       }
+      
+      logger.info(`🎉 所有 ${chunks.length} 個片段序列處理完成，總文字長度: ${fullTranscript.length}`);
+    }
     } else {
       // 2. Pre-process audio (single file)
       const processedPath = path.join(tempDir.name, 'processed.mp3');

@@ -32,7 +32,7 @@ def transcribe_audio(audio_path, model_name="base", language="zh"):
             raise FileNotFoundError(f"音檔不存在: {audio_path}")
         
         # 載入模型
-        print(f"正在載入 Whisper 模型: {model_name}", file=sys.stderr)
+        print(f"🤖 正在載入 Whisper 模型: {model_name}", file=sys.stderr)
         model = whisper.load_model(model_name)
         
         # 轉錄選項
@@ -43,8 +43,12 @@ def transcribe_audio(audio_path, model_name="base", language="zh"):
         }
         
         # 執行轉錄
-        print(f"開始轉錄: {audio_path}", file=sys.stderr)
+        print(f"🎵 開始轉錄: {Path(audio_path).name}", file=sys.stderr)
         result = model.transcribe(audio_path, **options)
+        
+        # 清理模型以釋放記憶體
+        print(f"🗑️ 轉錄完成，清理模型資源", file=sys.stderr)
+        del model
         
         # 計算品質指標
         text = result["text"].strip()
