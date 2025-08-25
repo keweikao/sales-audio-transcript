@@ -18,8 +18,8 @@ const logger = winston.createLogger({
 const IPHONE_OPTIMIZED_CONFIG = {
   // Using 'base' model for OpenAI whisper (can be changed to 'large-v3' if resources allow)
   modelName: 'base',
-  // Chunking strategy for iPhone recordings
-  chunkDuration: 8 * 60, // 8 minutes per chunk, to reduce single segment processing time
+  // Chunking strategy for iPhone recordings - 增加到 30 分鐘避免過多分塊
+  chunkDuration: 30 * 60, // 30 minutes per chunk, to avoid too many parallel processes
   // Audio preprocessing parameters (already in preprocessiPhoneAudio)
   preprocessing: {
     bitrate: 64,
@@ -260,6 +260,7 @@ async function transcribeAudio(inputPath) {
       logger.info(`Audio duration (${audioInfo.duration}s) exceeds chunk duration (${IPHONE_OPTIMIZED_CONFIG.chunkDuration}s). Splitting into chunks.`);
       const chunks = await splitByTime(inputPath, IPHONE_OPTIMIZED_CONFIG.chunkDuration);
 
+      // 序列處理每個 chunk 以避免同時運行多個 Whisper 模型
       for (let i = 0; i < chunks.length; i++) {
         const chunkPath = chunks[i];
         logger.info(`Transcribing chunk ${i + 1}/${chunks.length}: ${chunkPath}`);
