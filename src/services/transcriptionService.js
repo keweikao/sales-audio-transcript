@@ -327,7 +327,6 @@ async function transcribeAudio(inputPath) {
       }
       
       logger.info(`🎉 所有 ${chunks.length} 個片段序列處理完成，總文字長度: ${fullTranscript.length}`);
-    }
     } else {
       // 2. Pre-process audio (single file)
       const processedPath = path.join(tempDir.name, 'processed.mp3');
