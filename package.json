@@ -1,6 +1,6 @@
 {
   "name": "zeabur-whisper-optimized",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Zeabur 簡化轉錄服務，配合 GAS 智能佇列使用",
   "main": "src/server.js",
   "scripts": {

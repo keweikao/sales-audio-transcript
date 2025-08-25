@@ -124,10 +124,11 @@ async function processTranscriptionJob(jobData) {
 app.get('/', (req, res) => {
   res.json({
     service: 'Zeabur 簡化轉錄服務',
-    version: '2.0.0', 
+    version: '2.0.1', 
     status: 'running',
-    description: '專為 GAS 智能佇列設計的單純轉錄服務',
-    queueManagement: 'Managed by GAS Smart Queue'
+    description: '專為 GAS 智能佇列設計的單純轉錄服務，優化分塊策略',
+    queueManagement: 'Managed by GAS Smart Queue',
+    chunkStrategy: '30分鐘分塊，序列處理避免資源過載'
   });
 });
 
@@ -196,7 +197,9 @@ app.get('/health', async (req, res) => {
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     service: 'zeabur-transcription-simplified',
-    version: '2.0.0'
+    version: '2.0.1',
+    chunkDuration: '30 minutes',
+    processingMode: 'sequential'
   });
 });
 
@@ -235,10 +238,11 @@ app.use((error, req, res, next) => {
 
 // 啟動服務器
 const server = app.listen(port, '0.0.0.0', () => {
-  logger.info(`🚀 Zeabur 簡化轉錄服務 (v2.0.0) 已啟動在 port ${port}`);
+  logger.info(`🚀 Zeabur 簡化轉錄服務 (v2.0.1) 已啟動在 port ${port}`);
   logger.info(`📊 品質監控: 啟用`);
   logger.info(`🔧 使用 OpenAI Whisper 本地轉錄`);
   logger.info(`🎯 佇列管理: 由 GAS 智能佇列負責`);
+  logger.info(`⚡ 分塊策略: 30分鐘序列處理`);
 });
 
 // 簡化版優雅關閉
