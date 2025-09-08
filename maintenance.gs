@@ -12,6 +12,7 @@ function onOpen() {
       .addItem('全自動重新分析遺漏項目', 'reprocessMissingAnalyses')
       .addSeparator()
       .addItem('補發所有遺漏的通知', 'resendMissingNotifications') // 這個函數在 main.gs
+      .addItem('同步 Slack ID 到 P 欄位', 'syncSlackIdsToMasterLog') // 這個函數在 main.gs
       .addSeparator()
       .addItem('啟用「定期補發通知」觸發器', 'setupMaintenanceTrigger')
       .addToUi();

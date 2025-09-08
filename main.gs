@@ -161,19 +161,24 @@ function syncFormToDatabase() {
     console.log(`📊 發現 ${newEntries.length} 筆新紀錄需要同步`);
 
     // 3. 將新紀錄批次新增到主資料庫
-    const rowsToAppend = newEntries.map(entry => [
-      entry.caseId,                     // A: Case_ID
-      entry.submissionTime,             // B: Submission_Timestamp
-      entry.salespersonEmail,           // C: Salesperson_Email
-      entry.audioFileName,              // D: Audio_File_Name
-      entry.audioFileLink,              // E: Audio_File_Link_GDrive
-      'Pending',                        // F: Transcription_Status
-      '', '', '', '', '', '', '', '',   // G-N
-      'Synced from Form',               // O: Data_Status
-      '',                               // P: Salesperson_Slack_ID
-      '', '' ,                           // Q-R
-      0                                 // S: Retry_Count
-    ]);
+    const rowsToAppend = newEntries.map(entry => {
+      // 嘗試從 User_Mapping 獲取 Slack ID
+      const slackId = getSlackIdByEmail(entry.salespersonEmail) || '';
+      
+      return [
+        entry.caseId,                     // A: Case_ID
+        entry.submissionTime,             // B: Submission_Timestamp
+        entry.salespersonEmail,           // C: Salesperson_Email
+        entry.audioFileName,              // D: Audio_File_Name
+        entry.audioFileLink,              // E: Audio_File_Link_GDrive
+        'Pending',                        // F: Transcription_Status
+        '', '', '', '', '', '', '', '',   // G-N
+        'Synced from Form',               // O: Data_Status
+        slackId,                          // P: Salesperson_Slack_ID (從 User_Mapping 取得)
+        '', '' ,                           // Q-R
+        0                                 // S: Retry_Count
+      ];
+    });
     
     mainSheet.getRange(mainSheet.getLastRow() + 1, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
     console.log(`📝 已將 ${newEntries.length} 筆新紀錄新增到 Master_Log`);
@@ -183,6 +188,10 @@ function syncFormToDatabase() {
       formResponseSheet.getRange(`E${rowIndex}`).setValue('Synced');
     });
     console.log(`✅ 已更新 ${syncedRowIndices.length} 筆紀錄的同步狀態`);
+
+    // 5. 立即同步所有缺失的 Slack ID (包含剛新增的資料)
+    console.log(`🔄 同步完成後，立即檢查並更新所有缺失的 Slack ID...`);
+    syncSlackIdsForAllMissingRecords();
 
   } catch (error) {
     console.error('❌ 表單同步失敗:', error);
@@ -436,6 +445,130 @@ function testWebhookHandler() {
   }
 }
 
+/**
+ * 同步所有缺失的 Slack ID (高效版本)
+ * 只處理 P 欄位為空的記錄，避免重複處理
+ */
+function syncSlackIdsForAllMissingRecords() {
+  try {
+    // 讀取 Master_Log
+    const masterSheet = getWorksheet();
+    const masterData = masterSheet.getDataRange().getValues();
+    
+    // 讀取 User_Mapping 並建立快取
+    const emailToSlackIdMap = buildEmailToSlackIdMap();
+    if (!emailToSlackIdMap) return;
+    
+    console.log(`📋 載入了 ${emailToSlackIdMap.size} 個 email 到 Slack ID 的對應`);
+    
+    // 找到所有需要更新的記錄
+    const updates = [];
+    for (let i = 1; i < masterData.length; i++) {
+      const row = masterData[i];
+      const email = row[getColumnIndex(CONFIG.COLUMNS.SALESPERSON_EMAIL)]; // C 欄
+      const currentSlackId = row[getColumnIndex(CONFIG.COLUMNS.SALESPERSON_SLACK_ID)]; // P 欄
+      
+      if (email && (!currentSlackId || currentSlackId.toString().trim() === '')) {
+        const emailKey = email.toString().trim().toLowerCase();
+        const mappedSlackId = emailToSlackIdMap.get(emailKey);
+        
+        if (mappedSlackId) {
+          updates.push({
+            rowIndex: i + 1,
+            slackId: mappedSlackId,
+            email: email
+          });
+        }
+      }
+    }
+    
+    // 批次更新
+    if (updates.length > 0) {
+      console.log(`🔄 發現 ${updates.length} 筆缺失的 Slack ID，開始批次更新...`);
+      
+      updates.forEach(update => {
+        masterSheet.getRange(`${CONFIG.COLUMNS.SALESPERSON_SLACK_ID}${update.rowIndex}`).setValue(update.slackId);
+      });
+      
+      console.log(`✅ Slack ID 同步完成！共更新了 ${updates.length} 筆記錄`);
+    } else {
+      console.log('✨ 所有記錄的 Slack ID 都已是最新狀態');
+    }
+    
+  } catch (error) {
+    console.error('❌ 同步缺失 Slack ID 失敗:', error);
+  }
+}
+
+/**
+ * 同步 User_Mapping 中的 Slack ID 到 Master_Log P 欄位
+ * 根據 email 對應關係，將 Slack ID 回填到主表單中
+ */
+function syncSlackIdsToMasterLog() {
+  console.log('🔄 開始同步 Slack ID 到 Master_Log...');
+  syncSlackIdsForAllMissingRecords();
+}
+
+/**
+ * 建立 email 到 Slack ID 的對應表 (快取版本)
+ */
+function buildEmailToSlackIdMap() {
+  try {
+    const userMappingSheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.USER_MAPPING_SHEET_NAME);
+    if (!userMappingSheet) {
+      console.error('❌ 找不到 User_Mapping 工作表');
+      return null;
+    }
+    
+    const userMappingData = userMappingSheet.getDataRange().getValues();
+    const emailToSlackIdMap = new Map();
+    
+    for (let i = 1; i < userMappingData.length; i++) {
+      const email = userMappingData[i][0]; // A 欄: Email
+      const slackId = userMappingData[i][1]; // B 欄: Slack_ID
+      
+      if (email && slackId) {
+        emailToSlackIdMap.set(email.toString().trim().toLowerCase(), slackId.toString().trim());
+      }
+    }
+    
+    return emailToSlackIdMap;
+  } catch (error) {
+    console.error('❌ 建立 email 對應表失敗:', error);
+    return null;
+  }
+}
+
+/**
+ * 根據 email 獲取對應的 Slack ID
+ * 這個函數可以被其他函數呼叫，避免重複讀取 User_Mapping
+ */
+function getSlackIdByEmail(email) {
+  if (!email) return null;
+  
+  try {
+    const userMappingSheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(CONFIG.USER_MAPPING_SHEET_NAME);
+    if (!userMappingSheet) return null;
+    
+    const userMappingData = userMappingSheet.getDataRange().getValues();
+    const emailKey = email.toString().trim().toLowerCase();
+    
+    for (let i = 1; i < userMappingData.length; i++) {
+      const mappingEmail = userMappingData[i][0];
+      const mappingSlackId = userMappingData[i][1];
+      
+      if (mappingEmail && mappingEmail.toString().trim().toLowerCase() === emailKey) {
+        return mappingSlackId ? mappingSlackId.toString().trim() : null;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ 獲取 Slack ID 失敗:', error);
+    return null;
+  }
+}
+
 // =====================================================================================
 // 系統管理與觸發器設定
 // =====================================================================================
@@ -455,7 +588,7 @@ function initializeSystem() {
   // 建立核心觸發器
   createTrigger('processAllPendingAnalysis', 15); // AI 分析 (每15分鐘)
   createTrigger('smartAudioQueueProcessor', 5);   // 音檔轉錄佇列 (每5分鐘)
-  createTrigger('syncFormToDatabase', 10);        // 資料同步 (每10分鐘)
+  createTrigger('syncFormToDatabase', 10);        // 資料同步 + Slack ID 同步 (每10分鐘)
   createTrigger('cleanupStuckProcessing', 60);    // 卡住的任務清理 (每小時)
   
   console.log('✅ 系統初始化完成！');

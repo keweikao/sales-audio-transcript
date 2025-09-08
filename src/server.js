@@ -6,6 +6,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const winston = require('winston');
 const fs = require('fs');
+const axios = require('axios');
 const { transcribeAudio, assessTranscriptionQuality } = require('./services/transcriptionService');
 const { downloadFromGoogleDrive } = require('./services/googleDriveService');
 const { updateGoogleSheet } = require('./services/googleSheetsService');
@@ -44,6 +45,59 @@ app.use((req, res, next) => {
 // 簡化版 - 移除佇列系統，由 GAS 管理佇列
 logger.info('🔄 Zeabur 簡化版 - 專職轉錄服務 (佇列由 GAS 管理)');
 
+/**
+ * 通知 Google Apps Script webhook 轉錄完成
+ */
+async function notifyGoogleAppsScript(caseId, transcript, status, metadata = {}) {
+  const webhookUrl = process.env.WEBHOOK_URL;
+  
+  if (!webhookUrl) {
+    logger.warn('⚠️ WEBHOOK_URL 環境變數未設置，跳過 webhook 通知');
+    // 如果沒有 webhook URL，就使用原本的直接更新 Google Sheets 方式
+    return await updateGoogleSheet(caseId, transcript, status, metadata);
+  }
+
+  try {
+    logger.info(`📡 發送 webhook 通知到 Google Apps Script: ${caseId}`);
+    
+    const webhookPayload = {
+      caseId: caseId,
+      transcriptText: transcript,
+      status: status,
+      metadata: metadata,
+      timestamp: new Date().toISOString()
+    };
+
+    const response = await axios.post(webhookUrl, webhookPayload, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000 // 30 秒超時
+    });
+
+    if (response.status === 200 || response.data === 'Success') {
+      logger.info(`✅ Webhook 通知成功 - Case ID: ${caseId}`);
+      return { success: true, method: 'webhook' };
+    } else {
+      throw new Error(`Webhook 回應異常: ${response.status} - ${response.data}`);
+    }
+
+  } catch (error) {
+    logger.error(`❌ Webhook 通知失敗 - Case ID: ${caseId}, Error: ${error.message}`);
+    
+    // Webhook 失敗時，改用直接更新 Google Sheets 作為備援
+    logger.info(`🔄 改用直接更新 Google Sheets 作為備援...`);
+    try {
+      await updateGoogleSheet(caseId, transcript, status, metadata);
+      logger.info(`✅ 備援更新成功 - Case ID: ${caseId}`);
+      return { success: true, method: 'fallback_sheets' };
+    } catch (fallbackError) {
+      logger.error(`❌ 備援更新也失敗 - Case ID: ${caseId}, Error: ${fallbackError.message}`);
+      throw fallbackError;
+    }
+  }
+}
+
 // 任務處理函數 (移除佇列依賴)
 async function processTranscriptionJob(jobData) {
   const { fileId, fileName, caseId } = jobData.data || jobData;
@@ -70,9 +124,9 @@ async function processTranscriptionJob(jobData) {
       processingMethod: processingMethod
     });
 
-    // 4. 更新 Google Sheets
-    logger.info(`📝 步驟 4/4: 更新 Google Sheets...`);
-    await updateGoogleSheet(caseId, transcript, 'Completed', {
+    // 4. 透過 webhook 通知 Google Apps Script
+    logger.info(`📝 步驟 4/4: 通知 Google Apps Script webhook...`);
+    await notifyGoogleAppsScript(caseId, transcript, 'Completed', {
       processingMethod: processingMethod,
       qualityScore: quality.score,
       confidence: quality.confidence
@@ -97,11 +151,11 @@ async function processTranscriptionJob(jobData) {
       error: error.message
     });
     
-    // 嘗試更新 Sheets 失敗狀態
+    // 嘗試通知 Google Apps Script 失敗狀態
     try {
-      await updateGoogleSheet(caseId, `轉錄失敗: ${error.message}`, '轉錄失敗');
-    } catch (sheetError) {
-      logger.error(`更新失敗狀態到 Sheets 也失敗: ${sheetError.message}`);
+      await notifyGoogleAppsScript(caseId, `轉錄失敗: ${error.message}`, 'Failed');
+    } catch (notifyError) {
+      logger.error(`通知 Google Apps Script 失敗狀態也失敗: ${notifyError.message}`);
     }
     
     throw error;
