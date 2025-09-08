@@ -1,0 +1,78 @@
+name: whisper-optimized-service
+
+services:
+  app:
+    type: nodejs
+    buildCommand: npm install --only=production
+    startCommand: npm start
+    
+    # 環境變數設定
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+    # 資源配置
+    resources:
+      memory: 4096 # 4GB 記憶體，確保 Whisper 模型穩定運行
+      cpu: 2000 # 2 CPU 核心，提升處理速度
+      
+    # 健康檢查
+    healthcheck:
+      path: /health
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      initial_delay: 120s
+      
+    # 自動重啟設定
+    restart: unless-stopped
+    
+    # 持續化儲存
+    volumes:
+      - type: volume
+        source: app-data
+        target: /app/data
+      - type: volume
+        source: app-logs
+        target: /app/logs
+        
+    # 網路設定
+    ports:
+      - 3000:3000
+      
+    # 依賴服務
+    depends_on:
+      - redis
+      
+  # Redis 服務 (用於 Bull Queue)
+  redis:
+    type: redis
+    version: 7
+    
+    # Redis 配置
+    config:
+      maxmemory: 256mb
+      maxmemory-policy: allkeys-lru
+      requirepass: ${REDIS_PASSWORD}
+      
+    # 持續化儲存
+    volumes:
+      - type: volume
+        source: redis-data
+        target: /data
+        
+# 儲存卷定義        
+volumes:
+  app-data:
+    driver: local
+  app-logs:
+    driver: local
+  redis-data:
+    driver: local
+    
+# 網路設定
+networks:
+  default:
+    driver: bridge
