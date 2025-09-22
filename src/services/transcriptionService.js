@@ -42,79 +42,74 @@ const IPHONE_OPTIMIZED_CONFIG = {
  * @returns {Promise<string>} A promise that resolves with the transcribed text.
  */
 // 全域變數追蹤當前進程，確保同時只有一個 Whisper 進程運行
-let currentWhisperProcess = null;
-
 function transcribeWithOpenAIWhisper(audioPath) {
   return new Promise((resolve, reject) => {
-    // 🚫 如果已經有進程在運行，等待它完成
-    if (currentWhisperProcess) {
-      logger.warn(`⚠️ 偵測到已有 Whisper 進程運行，等待完成...`);
-      return reject(new Error('Another Whisper process is already running. Sequential processing violated.'));
-    }
-    
     const pythonScriptPath = path.join(__dirname, 'whisper_transcribe.py');
     logger.info(`🚀 啟動 Python Whisper 進程: ${path.basename(audioPath)}`);
     
     const pythonProcess = spawn('python3', [pythonScriptPath, audioPath, '--output-json'], {
       timeout: 29 * 60 * 1000 // 29 minutes timeout for the Python process
     });
-    
-    // 設定當前進程
-    currentWhisperProcess = pythonProcess;
-
-    // Handle process timeout
-    pythonProcess.on('timeout', () => {
-      logger.error('⏰ Python script timed out.');
-      pythonProcess.kill(); // Terminate the process
-      // 清理當前進程追蹤
-      currentWhisperProcess = null;
-      logger.info(`🔄 Python 進程超時，已清理進程追蹤`);
-      reject(new Error('Transcription process exceeded its time limit (29 minutes).'));
-    });
 
     let transcript = '';
     let errorMessage = '';
+    let scriptExited = false;
+    let stdoutClosed = false;
+    let stderrClosed = false;
 
-    // Capture standard output from the Python script
+    const tryResolve = () => {
+      // Ensure we only resolve/reject once, and only after the process has exited
+      // and all output streams are closed.
+      if (scriptExited && stdoutClosed && stderrClosed) {
+        if (pythonProcess.exitCode === 0) {
+          logger.info('✅ Python script finished successfully.');
+          try {
+            const result = JSON.parse(transcript.trim());
+            resolve(result);
+          } catch (parseError) {
+            logger.warn('Could not parse Python script output as JSON, falling back to plain text.');
+            resolve(transcript.trim());
+          }
+        } else {
+          logger.error(`❌ Python script exited with code ${pythonProcess.exitCode}`);
+          reject(new Error(`Transcription failed with exit code ${pythonProcess.exitCode}. Error: ${errorMessage}`));
+        }
+      }
+    };
+
     pythonProcess.stdout.on('data', (data) => {
       transcript += data.toString();
     });
+    pythonProcess.stdout.on('close', () => {
+      stdoutClosed = true;
+      tryResolve();
+    });
 
-    // Capture standard error
     pythonProcess.stderr.on('data', (data) => {
       const stderrLine = data.toString();
       logger.error(`[Python Script]: ${stderrLine}`);
       errorMessage += stderrLine;
     });
-
-    // Handle process exit
-    pythonProcess.on('close', (code) => {
-      // 清理當前進程追蹤
-      currentWhisperProcess = null;
-      logger.info(`🔄 Python Whisper 進程結束，已清理進程追蹤`);
-      
-      if (code === 0) {
-        logger.info('✅ Python script finished successfully.');
-        try {
-          // Try to parse as JSON first, fallback to plain text
-          const result = JSON.parse(transcript.trim());
-          resolve(result);
-        } catch (parseError) {
-          // If not JSON, treat as plain text
-          resolve(transcript.trim());
-        }
-      } else {
-        logger.error(`❌ Python script exited with code ${code}`);
-        reject(new Error(`Transcription failed with exit code ${code}. Error: ${errorMessage}`));
-      }
+    pythonProcess.stderr.on('close', () => {
+      stderrClosed = true;
+      tryResolve();
     });
 
-    // Handle process errors
+    pythonProcess.on('exit', (code) => {
+      scriptExited = true;
+      pythonProcess.exitCode = code; // Store exit code
+      logger.info(`🔄 Python Whisper 進程結束`);
+      tryResolve();
+    });
+
     pythonProcess.on('error', (err) => {
-      // 清理當前進程追蹤
-      currentWhisperProcess = null;
       logger.error('❌ Failed to start Python script.', err);
       reject(err);
+    });
+    
+    pythonProcess.on('timeout', () => {
+      logger.error('⏰ Python script timed out.');
+      pythonProcess.kill();
     });
   });
 }
