@@ -4,7 +4,7 @@
   "description": "Zeabur 簡化轉錄服務，配合 GAS 智能佇列使用",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node --expose-gc src/server.js",
     "dev": "nodemon src/server.js",
     "test": "jest",
     "lint": "eslint src/",

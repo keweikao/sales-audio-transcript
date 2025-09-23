@@ -314,6 +314,12 @@ async function transcribeAudio(inputPath) {
           logger.warn(`⚠️ 清理片段 ${i + 1} 臨時檔案失敗: ${cleanupErr.message}`);
         }
         
+        // 手動觸發垃圾回收
+        if (global.gc) {
+          logger.info(`🧹 手動觸發垃圾回收...`);
+          global.gc();
+        }
+        
         // 在片段之間加入短暫延遲，確保資源完全釋放
         if (i < chunks.length - 1) {
           logger.info(`⏸️ 片段 ${i + 1} 處理完成，等待 2 秒後處理下一片段...`);
