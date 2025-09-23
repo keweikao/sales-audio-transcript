@@ -290,13 +290,19 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: '內部伺服器錯誤' });
 });
 
-// 啟動服務器
-const server = app.listen(port, '0.0.0.0', () => {
-  logger.info(`🚀 Zeabur 簡化轉錄服務 (v2.0.1) 已啟動在 port ${port}`);
-  logger.info(`📊 品質監控: 啟用`);
-  logger.info(`🔧 使用 OpenAI Whisper 本地轉錄`);
-  logger.info(`🎯 佇列管理: 由 GAS 智能佇列負責`);
-  logger.info(`⚡ 分塊策略: 30分鐘序列處理`);
+// 啟動服務器 (等待 Redis 連接成功後)
+logger.info('⏳ Waiting for Redis connection to be established...');
+audioQueue.isReady().then(() => {
+  logger.info('✅ Redis connection established.');
+  app.listen(port, '0.0.0.0', () => {
+    logger.info(`🚀 Faster-Whisper 轉錄服務 (v1.2.0) 已啟動在 port ${port}`);
+    logger.info(`📊 品質監控: 啟用`);
+    logger.info(`🔧 使用 Faster-Whisper 本地轉錄`);
+    logger.info('✅ 使用 Python Faster-Whisper 進行轉錄');
+  });
+}).catch(err => {
+  logger.error('❌ Could not connect to Redis during startup. Application will not start.', err);
+  process.exit(1); // 如果無法連接到 Redis，則退出應用程式
 });
 
 // 簡化版優雅關閉
